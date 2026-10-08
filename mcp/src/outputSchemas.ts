@@ -707,6 +707,15 @@ export const PUBLISH_BATCH_OUTPUT_SCHEMA = {
 
 /** Tools that must stay text-only (no schema, no structuredContent). */
 export const TEXT_ONLY_TOOLS = [
+  // Pay-per-call API tools return their JSON as text.
+  "zentrixpay_list_apis",
+  "zentrixpay_api_info",
+  "zentrixpay_call",
+  "zentrixpay_register_api",
+  "zentrixpay_update_api",
+  "zentrixpay_verify_api_ownership",
+  "zentrixpay_my_apis",
+  "zentrixpay_api_stats",
   "zentrixpay_repair_sponsored_account",
   "zentrixpay_terms",
   "zentrixpay_check_bindings",

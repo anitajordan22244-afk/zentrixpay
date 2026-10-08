@@ -2,7 +2,7 @@
   "name": "@zentrixpay/mcp",
   "version": "1.0.0",
   "type": "module",
-  "description": "MCP server for ZentrixPay — AI agent access to the vault",
+  "description": "MCP server for ZentrixPay — find, call and sell pay-per-call APIs from AI agents",
   "license": "MIT",
   "repository": {
     "type": "git",

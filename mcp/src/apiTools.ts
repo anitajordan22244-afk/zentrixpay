@@ -83,8 +83,19 @@ export const API_TOOL_DEFINITIONS: ToolDefinition[] = [
       type: "object",
       properties: {
         q: { type: "string", description: "Keyword to search for.", examples: ["weather"] },
-        limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
-        offset: { type: "integer", minimum: 0, default: 0 },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 100,
+          default: 20,
+          description: "Maximum number of APIs to return.",
+        },
+        offset: {
+          type: "integer",
+          minimum: 0,
+          default: 0,
+          description: "Number of APIs to skip, for paging.",
+        },
       },
       required: [],
     },
@@ -124,7 +135,12 @@ export const API_TOOL_DEFINITIONS: ToolDefinition[] = [
           description: "Path under the API, appended to its base URL.",
           examples: ["/weather/lagos", "users/42"],
         },
-        method: { type: "string", enum: HTTP_METHODS, default: "GET" },
+        method: {
+          type: "string",
+          enum: HTTP_METHODS,
+          default: "GET",
+          description: "HTTP method. Must be one the API allows.",
+        },
         query: {
           type: "object",
           additionalProperties: { type: "string" },
@@ -132,6 +148,7 @@ export const API_TOOL_DEFINITIONS: ToolDefinition[] = [
           examples: [{ units: "metric" }],
         },
         body: {
+          type: ["object", "array", "string"],
           description: "Request body. Objects are sent as JSON; strings are sent as-is.",
         },
         headers: {
@@ -181,7 +198,10 @@ export const API_TOOL_DEFINITIONS: ToolDefinition[] = [
       properties: {
         apiId: API_ID,
         ...API_FIELDS,
-        removeUpstreamHeader: { type: "boolean" },
+        removeUpstreamHeader: {
+          type: "boolean",
+          description: "Delete the stored secret header.",
+        },
         listed: { type: "boolean", description: "List or unlist the API." },
         confirmMainnet: CONFIRM_MAINNET,
       },
@@ -442,6 +462,15 @@ export function createApiToolHandler(deps: ApiToolDeps) {
   }
 
   return async function handle(name: string, args: Record<string, unknown>): Promise<string> {
+    // Same contract as the generic validator: an argument the schema does not
+    // advertise is an error, not something to silently ignore.
+    const known = API_TOOL_DEFINITIONS.find((t) => t.name === name)?.inputSchema.properties ?? {};
+    const unknown = Object.keys(args).filter((key) => !(key in known));
+    if (unknown.length > 0) {
+      throw new Error(
+        `Invalid arguments for ${name}: ${unknown.join(", ")} is not a recognized argument`,
+      );
+    }
     const base = deps.baseUrl();
     switch (name) {
       case "zentrixpay_list_apis": {

@@ -14,6 +14,7 @@ import {
   resolveToolDurationBudget,
 } from "./metrics.js";
 import { createMockFetch, mockEnabledFromEnv } from "./mock.js";
+import { DEFAULT_ZENTRIXPAY_URL } from "./config.js";
 import { initAuditLogging } from "./auditLog.js";
 import { safeErrorMessage } from "./redaction.js";
 import { signMutatingHeaders } from "./requestSignature.js";
@@ -54,7 +55,7 @@ import {
 const STELLAR_NETWORK = resolveStellarNetwork(process.env.STELLAR_NETWORK);
 const networkPreset = registryNetworks[STELLAR_NETWORK];
 
-const BASE_URL = process.env.ZENTRIXPAY_URL ?? "https://mindvault-hyr3.onrender.com";
+const BASE_URL = process.env.ZENTRIXPAY_URL ?? DEFAULT_ZENTRIXPAY_URL;
 const REGISTRY_CONTRACT_ID =
   process.env.VAULT_REGISTRY_CONTRACT_ID ?? networkPreset.defaultRegistryContractId ?? "";
 const REGISTRY_NETWORK_PASSPHRASE = networkPreset.networkPassphrase;

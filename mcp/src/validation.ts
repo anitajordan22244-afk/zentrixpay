@@ -27,6 +27,7 @@
  * The module is pure — no I/O, no globals — so it is unit-testable on its own.
  */
 
+import { API_TOOL_DEFINITIONS } from "./apiTools.js";
 import { parseMetadataHash, MetadataHashError, METADATA_HASH_FORMAT_HINT } from "./metadataHash.js";
 import { CATALOG_MAX_LIMIT, CATALOG_SORT_VALUES } from "./catalogFilters.js";
 import { REGISTRY_LIST_MAX_LIMIT } from "./registryPagination.js";
@@ -231,6 +232,8 @@ export const TOOLS_WITHOUT_ARG_VALIDATION: readonly string[] = [
   // string/flag/hash/integer/enum/tag_array fields. Argument shape is enforced
   // by the input schema in tools.ts and validated inline in the dispatch handler.
   "zentrixpay_publish_batch",
+  // Pay-per-call API tools validate their own arguments in apiTools.ts.
+  ...API_TOOL_DEFINITIONS.map((tool) => tool.name),
 ];
 
 /**

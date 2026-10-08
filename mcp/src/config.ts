@@ -35,7 +35,7 @@ import {
 } from "./diagnostics.js";
 
 /** ZentrixPay API base URL used when `ZENTRIXPAY_URL` is unset. */
-export const DEFAULT_ZENTRIXPAY_URL = "https://mindvault-hyr3.onrender.com";
+export const DEFAULT_ZENTRIXPAY_URL = "http://localhost:4021";
 
 /** Sponsored-account service URL used when `SPONSORED_ACCOUNT_URL` is unset. */
 export const DEFAULT_SPONSORED_ACCOUNT_URL = "https://stellar-sponsored-agent-account.onrender.com";
