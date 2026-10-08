@@ -31,7 +31,7 @@ const MANIFEST = {
   version: "1.0.0",
   repository: {
     type: "git",
-    url: "git+https://github.com/anitajordan22244-afk/mindvault.git",
+    url: "git+https://github.com/anitajordan22244-afk/zentrixpay.git",
     directory: "mcp",
   },
 };
@@ -160,7 +160,7 @@ describe("buildProvenance", () => {
 
     expect(provenance.source.commit).toBe(COMMIT);
     expect(provenance.source.ref).toBe("main");
-    expect(provenance.source.repository).toBe("https://github.com/anitajordan22244-afk/mindvault");
+    expect(provenance.source.repository).toBe("https://github.com/anitajordan22244-afk/zentrixpay");
     expect(provenance.source.dirty).toBe(false);
   });
 
@@ -358,7 +358,7 @@ describe("checkProvenance", () => {
   it("accepts an equivalent repository spelling", () => {
     const results = checkProvenance(
       build(),
-      { ...MANIFEST, repository: "anitajordan22244-afk/mindvault" },
+      { ...MANIFEST, repository: "anitajordan22244-afk/zentrixpay" },
       packed,
     );
 
