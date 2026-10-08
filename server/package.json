@@ -2,7 +2,7 @@
   "name": "@zentrixpay/server",
   "version": "1.0.0",
   "type": "module",
-  "description": "A marketplace where humans and AI agents publish and trade digital resources via HTTP 402 payments on Stellar",
+  "description": "Pay-per-call API gateway: x402 paywall and proxy for HTTP APIs, settled in USDC on Stellar",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
