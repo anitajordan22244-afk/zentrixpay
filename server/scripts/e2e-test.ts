@@ -1,5 +1,5 @@
 /**
- * MindVault end-to-end test: publish -> verify -> register -> read back.
+ * ZentrixPay end-to-end test: publish -> verify -> register -> read back.
  *
  * Walks the full integrated flow against a running server:
  *   1. Health check         — server reachable
@@ -47,7 +47,7 @@ import {
   Client as RegistryClient,
   Errors as RegistryErrors,
   type Resource as OnchainResource,
-} from "@mindvault/registry-client";
+} from "@zentrixpay/registry-client";
 import { wrapFetchWithPayment } from "@x402/fetch";
 import { x402Client } from "@x402/core/client";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
@@ -316,7 +316,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 export async function runE2E(): Promise<void> {
-  console.log("=== MindVault E2E: publish -> verify -> register -> read back ===");
+  console.log("=== ZentrixPay E2E: publish -> verify -> register -> read back ===");
   console.log(`Server:   ${BASE_URL}`);
   console.log(`Network:  ${NETWORK_NAME}`);
   console.log(`RPC:      ${SOROBAN_RPC_URL}`);
@@ -336,7 +336,7 @@ export async function runE2E(): Promise<void> {
   passStep(`wallet ready: ${wallet.publicKey}`);
 
   startStep("Register publisher");
-  const email = `e2e-${Date.now()}@mindvault.test`;
+  const email = `e2e-${Date.now()}@zentrixpay.test`;
   const register = await jsonRequest<RegisterResponse>("POST", "/publishers", {
     name: "E2E Test Publisher",
     email,

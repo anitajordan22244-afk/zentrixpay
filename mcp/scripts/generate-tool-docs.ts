@@ -12,8 +12,8 @@
  * the docs cannot drift from the code without a check noticing.
  *
  * Usage:
- *   pnpm --filter @mindvault/mcp generate-tool-docs          # write both files
- *   pnpm --filter @mindvault/mcp check-tool-docs             # exit 1 if either is stale
+ *   pnpm --filter @zentrixpay/mcp generate-tool-docs          # write both files
+ *   pnpm --filter @zentrixpay/mcp check-tool-docs             # exit 1 if either is stale
  *
  * Output is passed through prettier with the repository configuration before
  * it is written or compared, because the commit hook (`lint-staged`) formats
@@ -49,7 +49,7 @@ async function formatForPath(content: string, relativePath: string): Promise<str
 
 async function main(): Promise<void> {
   const mode = checkOnly ? "checking" : "generating";
-  console.log(`MindVault MCP — ${mode} tool docs (${TOOL_DEFINITIONS.length} tools)`);
+  console.log(`ZentrixPay MCP — ${mode} tool docs (${TOOL_DEFINITIONS.length} tools)`);
 
   let stale = 0;
   for (const target of TOOL_DOC_TARGETS) {

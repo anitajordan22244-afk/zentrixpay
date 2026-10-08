@@ -4,7 +4,7 @@ import {
   applyNetworkEnvDefaults,
   resolveStellarNetwork,
   validateNetworkConfig,
-} from "@mindvault/registry-client";
+} from "@zentrixpay/registry-client";
 import { rootLogger } from "./lib/logger.js";
 
 const envWithDefaults = applyNetworkEnvDefaults(process.env);

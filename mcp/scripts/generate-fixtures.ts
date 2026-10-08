@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * Offline fixture generation for the MindVault MCP server.
+ * Offline fixture generation for the ZentrixPay MCP server.
  *
  * Serialises the in-memory mock data (from `src/mock.ts`) to static JSON files
  * under `fixtures/`. The generated files are the single offline source of truth
@@ -8,7 +8,7 @@
  * without starting any process or touching the network.
  *
  * Usage:
- *   pnpm --filter @mindvault/mcp generate-fixtures
+ *   pnpm --filter @zentrixpay/mcp generate-fixtures
  *   # or from mcp/
  *   pnpm generate-fixtures
  *
@@ -120,7 +120,7 @@ function horizonBalancesFixture(): object {
 }
 
 function main(): void {
-  console.log("MindVault MCP — generating offline fixtures");
+  console.log("ZentrixPay MCP — generating offline fixtures");
 
   writeFixture("catalog.json", catalogFixture());
   writeFixture("registry.json", registryFixture());

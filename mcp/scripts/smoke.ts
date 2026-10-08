@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * MindVault MCP end-to-end smoke test.
+ * ZentrixPay MCP end-to-end smoke test.
  *
  * Boots the MCP server over stdio and drives the full agent flow —
  * setup wallet → register → publish → preview → buy — then exits non-zero if
@@ -12,7 +12,7 @@
  *                     The publisher wallet must hold testnet USDC (see
  *                     docs/mcp-smoke-test.md).
  *
- * Usage: pnpm --filter @mindvault/mcp smoke [--target mock|testnet]
+ * Usage: pnpm --filter @zentrixpay/mcp smoke [--target mock|testnet]
  */
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -51,7 +51,7 @@ function tsxCliPath(): string {
  * Build the environment for the child MCP server. In mock mode every upstream is
  * pointed at the local stub via `*.localhost` hosts — chosen so the server's
  * network validation still infers testnet — and HOME is redirected to a temp dir
- * so the run never touches the operator's real ~/.mindvault/state.json.
+ * so the run never touches the operator's real ~/.zentrixpay/state.json.
  */
 function childEnv(target: Target, mock: MockServer | null, home: string): NodeJS.ProcessEnv {
   const base: NodeJS.ProcessEnv = { ...process.env, HOME: home, USERPROFILE: home };
@@ -59,7 +59,7 @@ function childEnv(target: Target, mock: MockServer | null, home: string): NodeJS
   return {
     ...base,
     STELLAR_NETWORK: "testnet",
-    MINDVAULT_URL: mock.url,
+    ZENTRIXPAY_URL: mock.url,
     SPONSORED_ACCOUNT_URL: mock.url,
     HORIZON_URL: `http://horizon-testnet.localhost:${mock.port}`,
     SOROBAN_RPC_URL: `http://soroban-testnet.localhost:${mock.port}`,
@@ -70,10 +70,10 @@ async function main(): Promise<number> {
   const target = parseTarget(process.argv.slice(2));
   const log = (line: string) => console.log(line);
 
-  log(`MindVault MCP smoke test — target: ${target}`);
+  log(`ZentrixPay MCP smoke test — target: ${target}`);
 
   const mock = target === "mock" ? await startMockServer() : null;
-  const home = mkdtempSync(join(tmpdir(), "mindvault-smoke-"));
+  const home = mkdtempSync(join(tmpdir(), "zentrixpay-smoke-"));
 
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -83,7 +83,7 @@ async function main(): Promise<number> {
     stderr: "inherit",
   });
 
-  const client = new Client({ name: "mindvault-smoke", version: "1.0.0" }, { capabilities: {} });
+  const client = new Client({ name: "zentrixpay-smoke", version: "1.0.0" }, { capabilities: {} });
   const smokeClient: SmokeToolClient = {
     callTool: (params) => client.callTool(params),
   };
