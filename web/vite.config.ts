@@ -38,8 +38,7 @@ export default defineConfig(({ mode }) => {
         manifest: {
           name: "ZentrixPay",
           short_name: "ZentrixPay",
-          description:
-            "Payment-protected vault for digital resources on Stellar using HTTP 402 and x402.",
+          description: "Pay-per-call APIs on Stellar using HTTP 402 and x402.",
           theme_color: "#4f46e5",
           background_color: "#ffffff",
           display: "standalone",
