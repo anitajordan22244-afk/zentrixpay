@@ -17,7 +17,7 @@ import { createLinkResource } from "../src/services/resourceService.js";
 import { registryClient, registryKeypair } from "../src/services/registryClient.js";
 import { config } from "../src/config.js";
 
-const SEED_EMAIL = "seed-dev@mindvault.local";
+const SEED_EMAIL = "seed-dev@zentrixpay.local";
 
 const SAMPLE_RESOURCES = [
   {
@@ -65,7 +65,7 @@ async function getOrCreateSeedPublisher() {
   }
 
   const { publisher } = await registerPublisher({
-    name: "MindVault Seed",
+    name: "ZentrixPay Seed",
     email: SEED_EMAIL,
     walletAddress: config.PAY_TO,
   });
@@ -150,7 +150,7 @@ async function registerOnChain(resource: {
 async function main() {
   const onchain = process.argv.includes("--onchain");
 
-  console.log("Seeding MindVault catalog...");
+  console.log("Seeding ZentrixPay catalog...");
   if (onchain) console.log("  (--onchain: will register on Stellar testnet)");
 
   const publisher = await getOrCreateSeedPublisher();

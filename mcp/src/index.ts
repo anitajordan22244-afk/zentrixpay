@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * MindVault MCP Server
+ * ZentrixPay MCP Server
  * Exposes vault tools to AI agents via the Model Context Protocol.
  */
 
@@ -11,7 +11,7 @@ import {
   Errors as RegistryErrors,
   listResources,
   type Resource,
-} from "@mindvault/registry-client";
+} from "@zentrixpay/registry-client";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -79,7 +79,9 @@ import { debugBundleTool } from "./debugBundle.js";
 import { exportReceiptsToolWithTimeout } from "./receipts.js";
 import { normalizeToolResult, outcomeText, type ToolOutcome } from "./toolResult.js";
 import { advertisedTools, hasOutputSchema } from "./toolSurface.js";
-import { dryRunPublish, dryRunBuy } from "./dryRun.js";
+import { dryRunPublish, dryRunBuy, type DryRunPublishLive } from "./dryRun.js";
+import { correlationHeaders } from "./correlation.js";
+import { API_TOOL_NAMES, createApiToolHandler } from "./apiTools.js";
 import { initAuditLogging } from "./auditLog.js";
 import { REGISTRY_LIST_DEFAULT_LIMIT, REGISTRY_LIST_DEFAULT_START } from "./registryPagination.js";
 import {
@@ -226,7 +228,12 @@ import {
   recordCatalogSnapshot,
   recordPreviewSnapshot,
 } from "./catalogCache.js";
-import { publishBatch, type BatchPublishItem } from "./tools/publish.js";
+import {
+  publishBatch,
+  acceptTransfer,
+  cancelTransfer,
+  type BatchPublishItem,
+} from "./tools/publish.js";
 import { buyLease, leaseStatus } from "./tools/leases.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -283,8 +290,8 @@ function _isMock(): boolean {
   return mockEnabledFromEnv(process.env);
 }
 export function _setMockMode(on: boolean): void {
-  if (on) process.env.MINDVAULT_MOCK = "1";
-  else delete process.env.MINDVAULT_MOCK;
+  if (on) process.env.ZENTRIXPAY_MOCK = "1";
+  else delete process.env.ZENTRIXPAY_MOCK;
 }
 const httpFetch: typeof fetch = MOCK
   ? createMockFetch(() => currentWallet()?.publicKey)
@@ -299,7 +306,7 @@ const USER_AGENT = resolveUserAgent(process.env);
 
 const logRetry = process.env.VITEST
   ? undefined
-  : (info: RetryAttemptInfo) => logger.info(`MindVault MCP: ${formatRetryLog(info)}`);
+  : (info: RetryAttemptInfo) => logger.info(`ZentrixPay MCP: ${formatRetryLog(info)}`);
 
 function httpRetryOptions(label: string) {
   return {
@@ -316,7 +323,10 @@ function httpRetryOptions(label: string) {
 function sorobanRpcFetch(init: RequestInit, label: string): Promise<Response> {
   const initWithUA: RequestInit = {
     ...init,
-    headers: { "User-Agent": USER_AGENT, ...correlationHeaders(init.headers as Record<string, string> | undefined) },
+    headers: {
+      "User-Agent": USER_AGENT,
+      ...correlationHeaders(init.headers as Record<string, string> | undefined),
+    },
   };
   return withRetry(
     () => fetchWithTimeout(httpFetch, SOROBAN_RPC_URL, initWithUA, "soroban", TIMEOUTS.soroban),
@@ -326,7 +336,7 @@ function sorobanRpcFetch(init: RequestInit, label: string): Promise<Response> {
 
 // ── State persistence ─────────────────────────────────────────────────────────
 
-const STATE_DIR = join(homedir(), ".mindvault");
+const STATE_DIR = join(homedir(), ".zentrixpay");
 const STATE_FILE = join(STATE_DIR, "state.json");
 
 let profiles: Record<string, WalletProfile> = {};
@@ -374,7 +384,7 @@ export function backupState(passphrase: string, confirm: unknown = false): strin
     return [
       "Backup NOT performed — confirmation required.",
       "This will export every wallet secret key and publisher API key in encrypted form.",
-      "To proceed, call mindvault_backup_state again with confirm: true.",
+      "To proceed, call zentrixpay_backup_state again with confirm: true.",
     ].join("\n");
   }
   const path = exportStateFile(passphrase);
@@ -382,7 +392,7 @@ export function backupState(passphrase: string, confirm: unknown = false): strin
     "Encrypted state backup written.",
     `File: ${path}`,
     "The file is mode 0600 and contains no plaintext secrets.",
-    "Restore with mindvault_restore_state using the file contents as blob and the same passphrase.",
+    "Restore with zentrixpay_restore_state using the file contents as blob and the same passphrase.",
   ].join("\n");
 }
 
@@ -396,12 +406,12 @@ function quarantineCorruptState(reason: string, detail: string): void {
   try {
     const quarantined = quarantineStateFile(STATE_FILE);
     console.error(
-      `MindVault MCP: state file ${STATE_FILE} ${reason} and was quarantined to ${quarantined}; ` +
+      `ZentrixPay MCP: state file ${STATE_FILE} ${reason} and was quarantined to ${quarantined}; ` +
         `starting fresh.${detail ? ` ${detail}` : ""}`,
     );
   } catch (err) {
     console.error(
-      `MindVault MCP: state file ${STATE_FILE} ${reason}; starting fresh ` +
+      `ZentrixPay MCP: state file ${STATE_FILE} ${reason}; starting fresh ` +
         `(could not quarantine the file: ${safeErrorMessage(err)}).`,
     );
   }
@@ -440,7 +450,7 @@ function loadState(): void {
       preserveLegacyState(legacy);
     } catch (err) {
       console.error(
-        "MindVault MCP: failed to preserve legacy state before migration:",
+        "ZentrixPay MCP: failed to preserve legacy state before migration:",
         safeErrorMessage(err),
       );
     }
@@ -474,7 +484,7 @@ function saveState(): boolean {
     writeAtomically(STATE_FILE, JSON.stringify(state, null, 2), 0o600);
     return true;
   } catch (err) {
-    console.error("MindVault MCP: failed to persist state:", safeErrorMessage(err));
+    console.error("ZentrixPay MCP: failed to persist state:", safeErrorMessage(err));
     return false;
   }
 }
@@ -541,7 +551,10 @@ async function checkDependency(
 ): Promise<DependencyStatus> {
   const initWithUA: RequestInit = {
     ...init,
-    headers: { "User-Agent": USER_AGENT, ...correlationHeaders(init?.headers as Record<string, string> | undefined) },
+    headers: {
+      "User-Agent": USER_AGENT,
+      ...correlationHeaders(init?.headers as Record<string, string> | undefined),
+    },
   };
   try {
     const res = await withRetry(
@@ -560,7 +573,7 @@ async function checkDependency(
 async function registryHealth(): Promise<string> {
   const deps: DependencyStatus[] = [];
 
-  deps.push(await checkDependency("MindVault API", `${BASE_URL}/resources`));
+  deps.push(await checkDependency("ZentrixPay API", `${BASE_URL}/resources`));
   deps.push(await checkDependency("Horizon", `${HORIZON_URL}`));
   deps.push(
     await checkDependency("Soroban RPC", SOROBAN_RPC_URL, {
@@ -614,7 +627,7 @@ async function registryHealth(): Promise<string> {
 // every successful call and falls back to the last snapshot on a transport
 // failure — but on a genuine cold boot there is no snapshot yet, so the very
 // first failure has nothing to fall back to. This proactively triggers one
-// browse at MCP startup (and on demand via mindvault_prewarm_catalog) so that
+// browse at MCP startup (and on demand via zentrixpay_prewarm_catalog) so that
 // if the API is unreachable early in a session, the fallback it serves is a
 // fresh one rather than none at all.
 export async function prewarmCatalogCache(): Promise<string> {
@@ -648,20 +661,20 @@ export function mainnetBanner(): string {
 }
 
 const API_MUTATION_TOOLS = new Set([
-  "mindvault_register",
-  "mindvault_publish",
-  "mindvault_rotate_publisher_key",
+  "zentrixpay_register",
+  "zentrixpay_publish",
+  "zentrixpay_rotate_publisher_key",
 ]);
 
 async function assertApiReachableFor(toolName: string): Promise<void> {
-  const dep = await checkDependency("MindVault API", `${BASE_URL}/resources`);
+  const dep = await checkDependency("ZentrixPay API", `${BASE_URL}/resources`);
   if (dep.ok) return;
   throw mcpError({
     source: "api",
     category: "network",
-    summary: `${toolName} was not attempted because the MindVault API is not reachable (${dep.message}).`,
+    summary: `${toolName} was not attempted because the ZentrixPay API is not reachable (${dep.message}).`,
     action:
-      "Check network connectivity to the MindVault API and retry; if it stays down the mutation cannot succeed, so defer it.",
+      "Check network connectivity to the ZentrixPay API and retry; if it stays down the mutation cannot succeed, so defer it.",
   });
 }
 
@@ -675,11 +688,11 @@ async function importWallet(args: {
 
   let secretKey = args.secretKey;
   if (!secretKey) {
-    secretKey = process.env.MINDVAULT_AGENT_SECRET;
+    secretKey = process.env.ZENTRIXPAY_AGENT_SECRET;
   }
   if (!secretKey) {
     throw new Error(
-      "No secret key provided. Pass secretKey or set MINDVAULT_AGENT_SECRET in the environment.",
+      "No secret key provided. Pass secretKey or set ZENTRIXPAY_AGENT_SECRET in the environment.",
     );
   }
 
@@ -727,7 +740,7 @@ async function rotatePublisherKey(profileArg?: string): Promise<string> {
   const wallet = requireWallet();
   const oldApiKey = profiles[target]?.apiKey;
   if (!oldApiKey) {
-    throw new Error(`No publisher API key in profile "${target}". Run mindvault_register first.`);
+    throw new Error(`No publisher API key in profile "${target}". Run zentrixpay_register first.`);
   }
 
   const res = await jsonFetch(`${BASE_URL}/publishers/rotate-key`, {
@@ -796,7 +809,7 @@ function timeoutServiceForUrl(url: string): TimeoutService {
 }
 
 const SERVICE_OPERATION: Record<ErrorSource, string> = {
-  api: "MindVault API request failed",
+  api: "ZentrixPay API request failed",
   horizon: "Horizon request failed",
   soroban: "Soroban RPC request failed",
   sponsored: "Sponsored-account request failed",
@@ -850,7 +863,7 @@ function requireWallet(): AgentWallet {
   const wallet = currentWallet();
   if (!wallet) {
     throw new Error(
-      `No wallet in profile "${activeProfileName}". Run mindvault_setup_wallet first.`,
+      `No wallet in profile "${activeProfileName}". Run zentrixpay_setup_wallet first.`,
     );
   }
   return wallet;
@@ -902,7 +915,7 @@ function requireApiKey(): string {
   const apiKey = currentApiKey();
   if (!apiKey) {
     throw new Error(
-      `Not registered in profile "${activeProfileName}". Run mindvault_register first.`,
+      `Not registered in profile "${activeProfileName}". Run zentrixpay_register first.`,
     );
   }
   return apiKey;
@@ -1010,7 +1023,7 @@ async function getBalanceDetails(publicKey: string): Promise<BalanceDetails> {
       usdcBalance: "0",
       message:
         `Horizon reported a USDC balance this server could not read ("${String(usdc).slice(0, 32)}"), ` +
-        `so it is treated as zero rather than guessed at. Re-run mindvault_wallet_info; if it persists, the Horizon endpoint is returning an unexpected balance format.`,
+        `so it is treated as zero rather than guessed at. Re-run zentrixpay_wallet_info; if it persists, the Horizon endpoint is returning an unexpected balance format.`,
     };
   }
 
@@ -1125,7 +1138,7 @@ async function insufficientFundsMessage(
       `Cannot confirm the USDC balance before paying to ${action}.`,
       `Amount needed: ${trimUsdc(needAmount)} USDC`,
       `Reported balance: "${String(balance).slice(0, 32)}" could not be read as a USDC amount.`,
-      `No payment was submitted. Check the wallet with mindvault_wallet_info and retry.`,
+      `No payment was submitted. Check the wallet with zentrixpay_wallet_info and retry.`,
     ].join("\n");
   }
   if (comparison >= 0) return null;
@@ -1273,7 +1286,7 @@ function sponsoredAccountErrorData(status: number, data: unknown): unknown {
 /**
  * Stellar key derivation for the wallet integrity checks, loaded on demand.
  *
- * The SDK import is deferred — as `mindvault_import_wallet` already does — so
+ * The SDK import is deferred — as `zentrixpay_import_wallet` already does — so
  * the full Stellar SDK stays off the server's startup path.
  */
 async function stellarDerivePublicKey(): Promise<DerivePublicKey> {
@@ -1283,7 +1296,7 @@ async function stellarDerivePublicKey(): Promise<DerivePublicKey> {
 
 async function setupWallet(profileArg?: string): Promise<ToolOutcome> {
   const target = resolveProfileName(profileArg);
-  const operation = "mindvault_setup_wallet failed to create wallet";
+  const operation = "zentrixpay_setup_wallet failed to create wallet";
 
   let res: Awaited<ReturnType<typeof jsonFetch>>;
   try {
@@ -1326,7 +1339,7 @@ async function setupWallet(profileArg?: string): Promise<ToolOutcome> {
     persisted
       ? `Wallet persisted to ${STATE_FILE} (mode 0600).`
       : `⚠ Wallet held in memory only — writing ${STATE_FILE} failed, so it is lost when this server stops. ` +
-        `Back it up now with mindvault_backup_state, then fix the state directory's permissions.`,
+        `Back it up now with zentrixpay_backup_state, then fix the state directory's permissions.`,
   ].join("\n");
   return {
     text,
@@ -1342,7 +1355,7 @@ async function repairSponsoredAccount(secretKey: string, profileArg?: string): P
 
   if (details.status === "missing") {
     throw new Error(
-      `Sponsored-account repair stopped: ${publicKey} does not exist on the configured Stellar network. Retry mindvault_setup_wallet; no local key was changed.`,
+      `Sponsored-account repair stopped: ${publicKey} does not exist on the configured Stellar network. Retry zentrixpay_setup_wallet; no local key was changed.`,
     );
   }
 
@@ -1592,7 +1605,7 @@ function methodIndex(method: string): number {
 }
 
 /**
- * Surface the MindVault HTTP API's endpoints from its published OpenAPI spec
+ * Surface the ZentrixPay HTTP API's endpoints from its published OpenAPI spec
  * (`${BASE_URL}/openapi.json`), so an agent can discover what the server
  * exposes without guessing paths. Read-only and network-only.
  */
@@ -1668,7 +1681,7 @@ async function serverEndpointsOutcome(): Promise<ToolOutcome> {
         return `  ${op.method.padEnd(6)} ${op.path}${tags}${id}${summary}`;
       }),
       operations.length === 0 ? "No parseable operations found in the published spec." : null,
-      "Reflects the deployment configured by MINDVAULT_URL; for discovery only.",
+      "Reflects the deployment configured by ZENTRIXPAY_URL; for discovery only.",
     ]
       .filter((line): line is string => line !== null)
       .join("\n"),
@@ -1713,7 +1726,7 @@ function useProfileOutcome(nameArg: string): ToolOutcome {
     };
   }
   return {
-    text: `Active profile: ${nameArg}\nNo wallet in this profile yet. Run mindvault_setup_wallet to create one.`,
+    text: `Active profile: ${nameArg}\nNo wallet in this profile yet. Run zentrixpay_setup_wallet to create one.`,
     structured: { profile: nameArg, address: null, publisherRegistered: null },
   };
 }
@@ -1750,7 +1763,7 @@ function listProfilesOutcome(): ToolOutcome {
   };
   if (names.length === 0) {
     return {
-      text: `No profiles yet. Run mindvault_setup_wallet to create one (default profile: "${DEFAULT_PROFILE}").`,
+      text: `No profiles yet. Run zentrixpay_setup_wallet to create one (default profile: "${DEFAULT_PROFILE}").`,
       structured,
     };
   }
@@ -1982,7 +1995,7 @@ export async function publishStatus(
   const resourceId = (args.resourceId ?? "").trim();
   if (!resourceId) {
     throw new Error(
-      "resourceId is required. Pass the id returned by mindvault_publish (e.g. 'cm7x8y9z').",
+      "resourceId is required. Pass the id returned by zentrixpay_publish (e.g. 'cm7x8y9z').",
     );
   }
 
@@ -2020,7 +2033,7 @@ export async function subscribeResourceHandler(
   const resourceId = (args.resourceId ?? "").trim();
   if (!resourceId) {
     throw new Error(
-      "resourceId is required. Pass the id from mindvault_browse, mindvault_search, or mindvault_preview (e.g. 'cm7x8y9z').",
+      "resourceId is required. Pass the id from zentrixpay_browse, zentrixpay_search, or zentrixpay_preview (e.g. 'cm7x8y9z').",
     );
   }
 
@@ -2057,7 +2070,7 @@ async function register(name: string, email: string, walletAddress?: string): Pr
     });
   activeProfile().apiKey = res.data.apiKey;
   saveState();
-  return `Registered as publisher.\nProfile: ${activeProfileName}\nID: ${res.data.id}\nAPI key persisted to ${STATE_FILE} (not shown). Run mindvault_reset to revoke.`;
+  return `Registered as publisher.\nProfile: ${activeProfileName}\nID: ${res.data.id}\nAPI key persisted to ${STATE_FILE} (not shown). Run zentrixpay_reset to revoke.`;
 }
 
 async function publish(args: {
@@ -2085,18 +2098,13 @@ async function publish(args: {
         const bal = await getBalanceDetails(wallet.publicKey);
         live.usdcBalance = bal.usdcBalance;
       } catch (err) {
-        live.readError = live.readError ? `${live.readError}; ${safeErrorMessage(err)}` : safeErrorMessage(err);
+        live.readError = live.readError
+          ? `${live.readError}; ${safeErrorMessage(err)}`
+          : safeErrorMessage(err);
       }
     }
     return JSON.stringify(
-      dryRunPublish(
-        args,
-        NETWORK,
-        BASE_URL,
-        !!wallet,
-        !!currentApiKey(),
-        live,
-      ),
+      dryRunPublish(args, NETWORK, BASE_URL, !!wallet, !!currentApiKey(), live),
       null,
       2,
     );
@@ -2200,7 +2208,7 @@ async function publish(args: {
     if (typeof data.txStatusUrl === "string") {
       failureGuidance.push(`Transaction status: ${data.txStatusUrl}`);
     } else if (onchainTxHash) {
-      failureGuidance.push(`Check transaction ${onchainTxHash} with mindvault_tx_status.`);
+      failureGuidance.push(`Check transaction ${onchainTxHash} with zentrixpay_tx_status.`);
     }
     if (Array.isArray(data.nextSteps)) {
       failureGuidance.push("Next steps:", ...data.nextSteps.map((s: string) => `  - ${s}`));
@@ -2355,7 +2363,7 @@ export async function buy(
       network: NETWORK,
     });
   } catch (err) {
-    logger.error("MindVault MCP: failed to persist purchase receipt:", safeErrorMessage(err));
+    logger.error("ZentrixPay MCP: failed to persist purchase receipt:", safeErrorMessage(err));
   }
 
   // Settlement confirmation (#888): when the caller passes wait: true we poll
@@ -2486,7 +2494,7 @@ export async function registerOnchain(
       action: [
         "The resource remains listed and purchasable.",
         "Ensure the agent wallet is funded for fees and retry.",
-        txHash ? `Tx hash: ${txHash} (check with mindvault_tx_status).` : null,
+        txHash ? `Tx hash: ${txHash} (check with zentrixpay_tx_status).` : null,
       ]
         .filter(Boolean)
         .join(" "),
@@ -3070,7 +3078,7 @@ export async function pendingTransfer(resourceId: string): Promise<string> {
         resourceId,
         found: false,
         proposedNewOwner: null,
-        message: `Resource "${resourceId}" is not registered on-chain. Confirm the id from mindvault_browse or mindvault_publish.`,
+        message: `Resource "${resourceId}" is not registered on-chain. Confirm the id from zentrixpay_browse or zentrixpay_publish.`,
         contract: REGISTRY_CONTRACT_ID,
         network: REGISTRY_NETWORK_PASSPHRASE,
         rpc: SOROBAN_RPC_URL,
@@ -3148,7 +3156,7 @@ export async function pendingTransfer(resourceId: string): Promise<string> {
         resourceId,
         found: false,
         proposedNewOwner: null,
-        message: `No pending ownership transfer exists for resource "${resourceId}". Use mindvault_transfer_ownership to propose one.`,
+        message: `No pending ownership transfer exists for resource "${resourceId}". Use zentrixpay_transfer_ownership to propose one.`,
         contract: REGISTRY_CONTRACT_ID,
         network: REGISTRY_NETWORK_PASSPHRASE,
         rpc: SOROBAN_RPC_URL,
@@ -3164,7 +3172,7 @@ export async function pendingTransfer(resourceId: string): Promise<string> {
       resourceId,
       found: true,
       proposedNewOwner,
-      message: `A pending ownership transfer exists for resource "${resourceId}". The proposed new owner must call mindvault_accept_transfer to complete it.`,
+      message: `A pending ownership transfer exists for resource "${resourceId}". The proposed new owner must call zentrixpay_accept_transfer to complete it.`,
       contract: REGISTRY_CONTRACT_ID,
       network: REGISTRY_NETWORK_PASSPHRASE,
       rpc: SOROBAN_RPC_URL,
@@ -3176,7 +3184,7 @@ export async function pendingTransfer(resourceId: string): Promise<string> {
 
 /**
  * Paginated list of resources from the on-chain vault registry (contract `list`).
- * Data comes from Soroban, not the MindVault API catalog.
+ * Data comes from Soroban, not the ZentrixPay API catalog.
  */
 export async function registryList(start: number, limit: number): Promise<string> {
   if (_isMock())
@@ -3205,7 +3213,7 @@ export async function registryList(start: number, limit: number): Promise<string
     const message =
       start === 0
         ? "No resources registered on-chain yet."
-        : `No on-chain resources in range [${start}, ${start + limit}). Try a lower start index or call mindvault_registry_info for contract context.`;
+        : `No on-chain resources in range [${start}, ${start + limit}). Try a lower start index or call zentrixpay_registry_info for contract context.`;
     return JSON.stringify(
       {
         source: "on-chain",
@@ -3352,7 +3360,7 @@ export async function recoverCatalogCache(): Promise<string> {
       source: "mcp",
       action: "recover_catalog_cache",
       message:
-        "Catalog cache recovery requested. The MCP does not perform automatic invalidation; re-run `mindvault_browse` to refresh client caches, restart the MCP to prime server-side caches, or trigger your API server's reindex endpoint if available.",
+        "Catalog cache recovery requested. The MCP does not perform automatic invalidation; re-run `zentrixpay_browse` to refresh client caches, restart the MCP to prime server-side caches, or trigger your API server's reindex endpoint if available.",
     },
     null,
     2,
@@ -3533,7 +3541,7 @@ export async function verifyAttestation(
       throw mcpError({
         ...mapped,
         action:
-          "Run mindvault_check_bindings. If get_attestation_hash is missing, point VAULT_REGISTRY_CONTRACT_ID at a deployment that includes it.",
+          "Run zentrixpay_check_bindings. If get_attestation_hash is missing, point VAULT_REGISTRY_CONTRACT_ID at a deployment that includes it.",
       });
     }
     throw mcpError(
@@ -3667,20 +3675,20 @@ const CLIENT_CONFIG_PROFILES: Record<
 function detectEntrypointPath(): string {
   const argv1 = process.argv[1];
   if (argv1 && /mcp[\\/]dist[\\/]index\.js$/.test(argv1)) return argv1;
-  return "/absolute/path/to/mindvault/mcp/dist/index.js";
+  return "/absolute/path/to/zentrixpay/mcp/dist/index.js";
 }
 
 /** Non-default environment values worth carrying into a generated config. */
 function detectConfigEnv(): Record<string, string> {
   const env: Record<string, string> = { STELLAR_NETWORK };
   const passthrough = [
-    "MINDVAULT_URL",
+    "ZENTRIXPAY_URL",
     "SPONSORED_ACCOUNT_URL",
     "SOROBAN_RPC_URL",
     "HORIZON_URL",
     "USDC_CONTRACT_ID",
     "VAULT_REGISTRY_CONTRACT_ID",
-    "MINDVAULT_ALLOW_MAINNET",
+    "ZENTRIXPAY_ALLOW_MAINNET",
   ] as const;
   for (const key of passthrough) {
     const value = process.env[key];
@@ -3695,7 +3703,7 @@ function buildClientConfigSnippet(
   env: Record<string, string>,
 ): string {
   const profile = CLIENT_CONFIG_PROFILES[clientId];
-  const serverName = env.STELLAR_NETWORK === "mainnet" ? "mindvault-mainnet" : "mindvault";
+  const serverName = env.STELLAR_NETWORK === "mainnet" ? "zentrixpay-mainnet" : "zentrixpay";
 
   if (profile.format === "toml") {
     const lines = [`[mcp_servers.${serverName}]`, `command = "node"`, `args = ["${entrypoint}"]`];
@@ -3781,7 +3789,7 @@ function toolMetrics(reset: boolean, format: MetricsExportFormat): string {
       {
         enabled: false,
         message:
-          "Metrics are disabled. Set MINDVAULT_METRICS=1 (or true/yes/on) and restart the server to collect tool-level metrics.",
+          "Metrics are disabled. Set ZENTRIXPAY_METRICS=1 (or true/yes/on) and restart the server to collect tool-level metrics.",
       },
       null,
       2,
@@ -3793,44 +3801,58 @@ function toolMetrics(reset: boolean, format: MetricsExportFormat): string {
 const SELF_VALIDATING_TOOLS = new Set(TOOLS_WITHOUT_ARG_VALIDATION);
 
 function isDispatchableTool(name: string): boolean {
-  return name in TOOL_ARGUMENT_SPECS || SELF_VALIDATING_TOOLS.has(name);
+  return name in TOOL_ARGUMENT_SPECS || SELF_VALIDATING_TOOLS.has(name) || API_TOOL_NAMES.has(name);
 }
 
+// Pay-per-call API tools live in apiTools.ts; they receive the wallet, paid
+// fetch and HTTP plumbing from here rather than importing this module.
+const handleApiTool = createApiToolHandler({
+  baseUrl: () => BASE_URL,
+  network: () => NETWORK,
+  jsonFetch,
+  requireApiKey,
+  requireWallet,
+  paidFetch: (wallet) => makePaidFetch(wallet as AgentWallet),
+  assertWithinCeiling: (price, maxAutoPayUsdc) =>
+    assertAutoPaymentWithinCeiling({ price, maxAutoPayUsdc }),
+  insufficientFundsMessage: (wallet, amount, action) =>
+    insufficientFundsMessage(wallet as AgentWallet, amount, action),
+  recordPurchase,
+});
+
 const STATE_MUTATING_TOOLS = new Set([
-  "mindvault_setup_wallet",
-  "mindvault_repair_sponsored_account",
-  "mindvault_use_profile",
-  "mindvault_switch_network_profile",
-  "mindvault_register",
-  "mindvault_publish",
-  "mindvault_publish_batch",
-  "mindvault_buy",
-  "mindvault_buy_lease",
-  "mindvault_register_onchain",
-  "mindvault_update_metadata",
-  "mindvault_set_price",
-  "mindvault_transfer_ownership",
-  "mindvault_accept_transfer",
-  "mindvault_cancel_transfer",
-  "mindvault_set_listed",
-  "mindvault_terms",
-  "mindvault_set_tags",
-  "mindvault_freeze",
-  "mindvault_royalty",
-  "mindvault_reset",
-  "mindvault_restore_state",
-  "mindvault_import_wallet",
-  "mindvault_rotate_publisher_key",
-  "mindvault_metrics",
+  "zentrixpay_setup_wallet",
+  "zentrixpay_repair_sponsored_account",
+  "zentrixpay_use_profile",
+  "zentrixpay_switch_network_profile",
+  "zentrixpay_register",
+  "zentrixpay_publish",
+  "zentrixpay_publish_batch",
+  "zentrixpay_buy",
+  "zentrixpay_buy_lease",
+  "zentrixpay_register_onchain",
+  "zentrixpay_update_metadata",
+  "zentrixpay_set_price",
+  "zentrixpay_transfer_ownership",
+  "zentrixpay_accept_transfer",
+  "zentrixpay_cancel_transfer",
+  "zentrixpay_set_listed",
+  "zentrixpay_terms",
+  "zentrixpay_set_tags",
+  "zentrixpay_freeze",
+  "zentrixpay_royalty",
+  "zentrixpay_reset",
+  "zentrixpay_restore_state",
+  "zentrixpay_import_wallet",
+  "zentrixpay_rotate_publisher_key",
+  "zentrixpay_metrics",
 ]);
 
 const stateMutex = new Mutex();
 
 async function dispatchToolOutcome(
   name: string,
-  args: ValidatedArgs,
-  dryRunArgs: ValidatedArgs,
-  rawRecord: Record<string, unknown>,
+  rawArgs: unknown,
   onProgress?: (progress: number, total?: number, message?: string) => Promise<void>,
 ): Promise<ToolOutcome> {
   if (!isDispatchableTool(name)) {
@@ -3849,20 +3871,20 @@ async function dispatchToolOutcome(
       : {};
 
   const isDryRunCall =
-    (name === "mindvault_publish" || name === "mindvault_buy") && rawRecord.dryRun === true;
+    (name === "zentrixpay_publish" || name === "zentrixpay_buy") && rawRecord.dryRun === true;
 
   const args: ValidatedArgs =
     name in TOOL_ARGUMENT_SPECS && !isDryRunCall ? validateToolArgs(name, rawArgs) : {};
   const dryRunArgs = isDryRunCall ? (rawRecord as ValidatedArgs) : args;
 
-  if (!(name === "mindvault_terms" && rawRecord.operation === "get")) {
+  if (!(name === "zentrixpay_terms" && rawRecord.operation === "get")) {
     assertMainnetMutationAllowed(NETWORK, name, rawRecord);
   }
 
   // Network-independent spend confirmation (#594). Distinct from the mainnet
   // guardrail above (which only fires on pubnet) and from the auto-pay ceiling
   // in buy() (which only fires above an amount); a call may have to satisfy
-  // all three. Off unless MINDVAULT_CONFIRM_PAID_OPERATIONS says otherwise.
+  // all three. Off unless ZENTRIXPAY_CONFIRM_PAID_OPERATIONS says otherwise.
   assertPaidOperationConfirmed({
     toolName: name,
     args: rawRecord,
@@ -3875,42 +3897,43 @@ async function dispatchToolOutcome(
   }
 
   const execute = async (): Promise<ToolOutcome> => {
+    if (API_TOOL_NAMES.has(name)) return handleApiTool(name, rawRecord);
     switch (name) {
-      case "mindvault_setup_wallet":
+      case "zentrixpay_setup_wallet":
         return setupWallet(optionalString(args, "profile"));
-      case "mindvault_repair_sponsored_account":
+      case "zentrixpay_repair_sponsored_account":
         return repairSponsoredAccount(
           requiredString(args, "secretKey"),
           optionalString(args, "profile"),
         );
-      case "mindvault_wallet_info":
+      case "zentrixpay_wallet_info":
         return walletInfoOutcome();
-      case "mindvault_use_profile":
+      case "zentrixpay_use_profile":
         return useProfileOutcome(requiredString(args, "name"));
-      case "mindvault_switch_network_profile":
+      case "zentrixpay_switch_network_profile":
         return switchNetworkProfile(
           requiredString(args, "name"),
           requiredString(args, "network") as "testnet" | "mainnet",
         );
-      case "mindvault_list_profiles":
+      case "zentrixpay_list_profiles":
         return listProfilesOutcome();
-      case "mindvault_browse": {
+      case "zentrixpay_browse": {
         const parsed = parseCatalogFilters(rawRecord);
         return parsed.ok ? browseOutcome(parsed.filters) : parsed.error;
       }
-      case "mindvault_search": {
+      case "zentrixpay_search": {
         const parsed = parseCatalogFilters(rawRecord, { requireCriteria: true });
         return parsed.ok ? searchOutcome(parsed.filters) : parsed.error;
       }
-      case "mindvault_preview":
+      case "zentrixpay_preview":
         return preview(requiredString(args, "resourceId"));
-      case "mindvault_register":
+      case "zentrixpay_register":
         return register(
           requiredString(args, "name"),
           requiredString(args, "email"),
           optionalString(args, "walletAddress"),
         );
-      case "mindvault_publish":
+      case "zentrixpay_publish":
         return publish({
           title: requiredString(dryRunArgs, "title"),
           description: optionalString(dryRunArgs, "description"),
@@ -3918,30 +3941,30 @@ async function dispatchToolOutcome(
           externalUrl: requiredString(dryRunArgs, "externalUrl"),
           dryRun: flag(dryRunArgs, "dryRun"),
         });
-      case "mindvault_publish_status":
+      case "zentrixpay_publish_status":
         return publishStatus(rawRecord, onProgress);
-      case "mindvault_publish_batch": {
+      case "zentrixpay_publish_batch": {
         const batchItems = rawRecord.items;
         if (!Array.isArray(batchItems) || batchItems.length === 0) {
-          throw new Error("mindvault_publish_batch: items must be a non-empty array.");
+          throw new Error("zentrixpay_publish_batch: items must be a non-empty array.");
         }
         const typedItems: BatchPublishItem[] = batchItems.map((item: any, i: number) => {
           if (!item || typeof item !== "object") {
-            throw new Error(`mindvault_publish_batch: items[${i}] must be an object.`);
+            throw new Error(`zentrixpay_publish_batch: items[${i}] must be an object.`);
           }
           if (typeof item.title !== "string" || item.title.trim() === "") {
             throw new Error(
-              `mindvault_publish_batch: items[${i}].title must be a non-empty string.`,
+              `zentrixpay_publish_batch: items[${i}].title must be a non-empty string.`,
             );
           }
           if (typeof item.price !== "string" || item.price.trim() === "") {
             throw new Error(
-              `mindvault_publish_batch: items[${i}].price must be a non-empty string.`,
+              `zentrixpay_publish_batch: items[${i}].price must be a non-empty string.`,
             );
           }
           if (typeof item.externalUrl !== "string" || item.externalUrl.trim() === "") {
             throw new Error(
-              `mindvault_publish_batch: items[${i}].externalUrl must be a non-empty string.`,
+              `zentrixpay_publish_batch: items[${i}].externalUrl must be a non-empty string.`,
             );
           }
           return {
@@ -3953,7 +3976,7 @@ async function dispatchToolOutcome(
         });
         return publishBatch(typedItems, onProgress);
       }
-      case "mindvault_buy":
+      case "zentrixpay_buy":
         return buy(
           requiredString(dryRunArgs, "resourceId"),
           flag(dryRunArgs, "dryRun"),
@@ -3964,124 +3987,124 @@ async function dispatchToolOutcome(
           args.timeoutMs,
           args.intervalMs,
         );
-      case "mindvault_buy_lease":
+      case "zentrixpay_buy_lease":
         return buyLease(requiredString(args, "resourceId"), requiredString(args, "tier"), {
           dryRun: flag(args, "dryRun"),
           maxAutoPayUsdc: optionalString(args, "maxAutoPayUsdc"),
           onProgress,
         });
-      case "mindvault_lease_status":
+      case "zentrixpay_lease_status":
         return leaseStatus(requiredString(args, "resourceId"), optionalString(args, "holder"));
-      case "mindvault_purchase_history":
+      case "zentrixpay_purchase_history":
         return purchaseHistoryTool(rawRecord);
-      case "mindvault_export_receipts":
+      case "zentrixpay_export_receipts":
         return exportReceiptsToolWithTimeout(
           rawRecord,
-          timeoutForTool("mindvault_export_receipts", "http", TIMEOUTS, TOOL_TIMEOUTS),
+          timeoutForTool("zentrixpay_export_receipts", "http", TIMEOUTS, TOOL_TIMEOUTS),
         );
-      case "mindvault_register_onchain":
+      case "zentrixpay_register_onchain":
         return registerOnchain(requiredString(args, "resourceId"), onProgress);
-      case "mindvault_agent_status":
+      case "zentrixpay_agent_status":
         return agentStatus();
-      case "mindvault_registry_info":
+      case "zentrixpay_registry_info":
         return registryInfo();
-      case "mindvault_terms":
+      case "zentrixpay_terms":
         return publisherTerms(
           requiredString(args, "operation"),
           optionalString(args, "creator"),
           optionalString(args, "termsHash"),
           flag(args, "confirmMainnet"),
         );
-      case "mindvault_network_profile":
+      case "zentrixpay_network_profile":
         return networkProfile();
-      case "mindvault_check_bindings":
+      case "zentrixpay_check_bindings":
         return checkBindings();
-      case "mindvault_check_consistency":
+      case "zentrixpay_check_consistency":
         return checkConsistency(
           requiredString(args, "resourceId"),
           optionalString(args, "expectedMetadataHash"),
         );
-      case "mindvault_verify_attestation":
+      case "zentrixpay_verify_attestation":
         return verifyAttestation(
           requiredString(args, "resourceId"),
           requiredString(args, "attestationHash"),
         );
-      case "mindvault_registry_lookup":
+      case "zentrixpay_registry_lookup":
         return registryLookup(requiredString(args, "resourceId"));
-      case "mindvault_batch_catalog_lookup":
+      case "zentrixpay_batch_catalog_lookup":
         return batchCatalogLookupOutcome(
           requiredStringArray(args, "resourceIds"),
           flag(args, "refetch"),
         );
-      case "mindvault_preview_metadata_hash":
+      case "zentrixpay_preview_metadata_hash":
         return previewMetadataHashOutcome(requiredString(args, "resourceId"));
-      case "mindvault_registry_list":
+      case "zentrixpay_registry_list":
         return registryList(
           optionalInt(args, "start", REGISTRY_LIST_DEFAULT_START),
           optionalInt(args, "limit", REGISTRY_LIST_DEFAULT_LIMIT),
         );
-      case "mindvault_registry_count":
+      case "zentrixpay_registry_count":
         return registryCount(optionalString(args, "creator"));
-      case "mindvault_update_metadata":
+      case "zentrixpay_update_metadata":
         return updateMetadata(requiredString(args, "resourceId"), requiredString(args, "metadata"));
-      case "mindvault_set_price":
+      case "zentrixpay_set_price":
         return setPrice(requiredString(args, "resourceId"), requiredString(args, "price"));
-      case "mindvault_transfer_ownership":
+      case "zentrixpay_transfer_ownership":
         return transferOwnership(
           requiredString(args, "resourceId"),
           requiredString(args, "newCreator"),
         );
-      case "mindvault_accept_transfer":
+      case "zentrixpay_accept_transfer":
         return acceptTransfer(requiredString(args, "resourceId"));
-      case "mindvault_cancel_transfer":
+      case "zentrixpay_cancel_transfer":
         return cancelTransfer(requiredString(args, "resourceId"));
-      case "mindvault_pending_transfer":
+      case "zentrixpay_pending_transfer":
         return pendingTransfer(requiredString(args, "resourceId"));
-      case "mindvault_set_listed":
+      case "zentrixpay_set_listed":
         return setListed(requiredString(args, "resourceId"), flag(args, "listed"));
-      case "mindvault_set_tags":
+      case "zentrixpay_set_tags":
         return setTags(requiredString(args, "resourceId"), requiredTagArray(args, "tags"));
-      case "mindvault_tx_status":
+      case "zentrixpay_tx_status":
         return txStatus(requiredString(args, "txHash"));
-      case "mindvault_reset":
+      case "zentrixpay_reset":
         return resetState(flag(args, "all"), rawRecord.confirm);
-      case "mindvault_backup_state":
+      case "zentrixpay_backup_state":
         return backupState(requiredString(args, "passphrase"), rawRecord.confirm);
-      case "mindvault_resource_provenance":
+      case "zentrixpay_resource_provenance":
         return provenanceChain(requiredString(args, "resourceId"));
-      case "mindvault_resource_change_log":
+      case "zentrixpay_resource_change_log":
         return resourceChangeLog(requiredString(args, "resourceId"));
-      case "mindvault_restore_state":
+      case "zentrixpay_restore_state":
         return restoreStateTool(requiredString(args, "blob"), requiredString(args, "passphrase"));
-      case "mindvault_metrics":
+      case "zentrixpay_metrics":
         return toolMetrics(flag(args, "reset"), normalizeMetricsExportFormat(args.format));
-      case "mindvault_check_state_permissions":
+      case "zentrixpay_check_state_permissions":
         return checkStatePermissionsTool();
-      case "mindvault_registry_health":
+      case "zentrixpay_registry_health":
         return registryHealth();
-      case "mindvault_prewarm_catalog":
+      case "zentrixpay_prewarm_catalog":
         return prewarmCatalogCache();
-      case "mindvault_client_config":
+      case "zentrixpay_client_config":
         return clientConfig(optionalString(args, "client"));
-      case "mindvault_mainnet_banner":
+      case "zentrixpay_mainnet_banner":
         return mainnetBanner();
-      case "mindvault_import_wallet":
+      case "zentrixpay_import_wallet":
         return importWallet({
           secretKey: optionalString(args, "secretKey"),
           profile: optionalString(args, "profile"),
           persist: flag(args, "persist"),
         });
-      case "mindvault_rotate_publisher_key":
+      case "zentrixpay_rotate_publisher_key":
         return rotatePublisherKey(optionalString(args, "profile"));
-      case "mindvault_verify_install":
+      case "zentrixpay_verify_install":
         return formatVerifyInstall(verifyInstall(process.env));
-      case "mindvault_debug_bundle":
+      case "zentrixpay_debug_bundle":
         return debugBundleTool(rawRecord);
-      case "mindvault_recover_catalog_cache":
+      case "zentrixpay_recover_catalog_cache":
         return recoverCatalogCache();
-      case "mindvault_wallet_balances":
+      case "zentrixpay_wallet_balances":
         return walletBalancesOutcome();
-      case "mindvault_server_endpoints":
+      case "zentrixpay_server_endpoints":
         return serverEndpointsOutcome();
       default:
         throw new Error(`Unknown tool: ${name}`);
@@ -4109,14 +4132,14 @@ export function normalizeToolResultForTest(name: string, outcome: ToolOutcome) {
 }
 
 const server = new Server(
-  { name: "mindvault", version: "1.0.0" },
+  { name: "zentrixpay", version: "1.0.0" },
   { capabilities: { tools: {}, prompts: {}, resources: {} } },
 );
 
 // ── MCP resources (#545) ─────────────────────────────────────────────────────
 // The vault catalog is exposed as resources so agents can discover entries
 // (resources/list) and read their public metadata (resources/read) without
-// invoking a tool. URIs are stable: mindvault://resource/<id>. Reads never
+// invoking a tool. URIs are stable: zentrixpay://resource/<id>. Reads never
 // return gated content — only the public meta endpoint is consulted.
 
 server.setRequestHandler(ListResourcesRequestSchema, async () => ({
@@ -4154,7 +4177,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       dispatchToolOutcome(name, args, progress?.emit),
     );
     // Opt-in structured telemetry stream (#891): one OTLP line to stderr per
-    // tool call when MINDVAULT_METRICS_EXPORT_CONSOLE is set, so a log
+    // tool call when ZENTRIXPAY_METRICS_EXPORT_CONSOLE is set, so a log
     // collector or otel-collector can tail the export without touching stdout.
     if (metricsExportToConsoleEnabled(process.env) && metrics.enabled) {
       console.error(metricsExportLine(metrics.snapshot(), "otlp"));
@@ -4201,7 +4224,7 @@ if (!process.env.VITEST && !MOCK) {
     network: STELLAR_NETWORK,
   })
     .then((result: { status: string; message: string }) => {
-      if (result.status === "mismatch") logger.warn(`MindVault MCP: ${result.message}`);
+      if (result.status === "mismatch") logger.warn(`ZentrixPay MCP: ${result.message}`);
     })
     .catch(() => {});
 }
@@ -4238,7 +4261,7 @@ if (!process.env.VITEST) {
 
   // Best-effort catalog cache pre-warm (#882). Fire-and-forget: never blocks
   // startup and never crashes the process if the API is unreachable — a
-  // failed pre-warm just means the first mindvault_browse pays the normal
+  // failed pre-warm just means the first zentrixpay_browse pays the normal
   // cold-cache cost, which is the status quo this is improving on, not a
   // regression.
   prewarmCatalogCache().catch(() => {});

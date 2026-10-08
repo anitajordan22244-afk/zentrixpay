@@ -1,5 +1,5 @@
 /**
- * Reconciliation script for MindVault.
+ * Reconciliation script for ZentrixPay.
  *
  * Walks every resource in the database that is marked as `onchain_status =
  * "registered"`, fetches the matching entry from the vault-registry contract on
@@ -100,7 +100,7 @@ export function printSummary(summary: ReconciliationSummary): 0 | 1 {
 
   const out: string[] = [];
   out.push(line);
-  out.push("MindVault Reconciliation Summary");
+  out.push("ZentrixPay Reconciliation Summary");
   out.push(`Run at: ${summary.checkedAt}`);
   out.push(`Resources checked:      ${summary.totalChecked}`);
   out.push(`In sync:                ${summary.inSync}`);

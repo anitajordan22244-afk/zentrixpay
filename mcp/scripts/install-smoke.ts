@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * MindVault MCP install smoke test.
+ * ZentrixPay MCP install smoke test.
  *
  * Launches the server exactly the way an agent client does after following the
  * README install — `node mcp/dist/index.js` over stdio — and drives the
@@ -12,8 +12,8 @@
  * cannot boot or cannot serve its documented tools.
  *
  * Usage:
- *   pnpm --filter @mindvault/mcp smoke:install              # built dist (default)
- *   pnpm --filter @mindvault/mcp smoke:install --entry src  # sources via tsx
+ *   pnpm --filter @zentrixpay/mcp smoke:install              # built dist (default)
+ *   pnpm --filter @zentrixpay/mcp smoke:install --entry src  # sources via tsx
  */
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -63,7 +63,7 @@ function serverCommand(entry: Entry): { args: string[]; label: string } {
   const built = join(mcpRoot, "dist", "index.js");
   if (!existsSync(built)) {
     throw new Error(
-      `${built} does not exist. Build the server first:\n  pnpm --filter @mindvault/mcp build`,
+      `${built} does not exist. Build the server first:\n  pnpm --filter @zentrixpay/mcp build`,
     );
   }
   return { args: [built], label: "dist/index.js" };
@@ -74,9 +74,9 @@ async function main(): Promise<number> {
   const log = (line: string) => console.log(line);
   const { args, label } = serverCommand(entry);
 
-  log(`MindVault MCP install smoke — entry: ${label}`);
+  log(`ZentrixPay MCP install smoke — entry: ${label}`);
 
-  const home = mkdtempSync(join(tmpdir(), "mindvault-install-smoke-"));
+  const home = mkdtempSync(join(tmpdir(), "zentrixpay-install-smoke-"));
   const transport = new StdioClientTransport({
     command: process.execPath,
     args,
@@ -85,7 +85,7 @@ async function main(): Promise<number> {
     stderr: "inherit",
   });
   const client = new Client(
-    { name: "mindvault-install-smoke", version: "1.0.0" },
+    { name: "zentrixpay-install-smoke", version: "1.0.0" },
     { capabilities: {} },
   );
   const smokeClient: SmokeToolClient = { callTool: (params) => client.callTool(params) };

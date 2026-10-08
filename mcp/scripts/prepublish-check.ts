@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Automated pre-publish gate for @mindvault/mcp.
+ * Automated pre-publish gate for @zentrixpay/mcp.
  *
  * Runs the checks from docs/mcp-publish-checklist.md and exits non-zero on the
  * first category that fails, so `pnpm prepublish:check` can gate a release in
@@ -182,7 +182,7 @@ if (provenance) results.push(checkProvenanceCoverage(provenance, pack.files));
 
 // 8. Optional end-to-end smoke run against the offline mock backend.
 if (runSmoke) {
-  const smoke = run("npx", ["tsx", "scripts/smoke.ts"], { MINDVAULT_MOCK: "1" });
+  const smoke = run("npx", ["tsx", "scripts/smoke.ts"], { ZENTRIXPAY_MOCK: "1" });
   results.push(
     commandCheck(
       "smoke:run",

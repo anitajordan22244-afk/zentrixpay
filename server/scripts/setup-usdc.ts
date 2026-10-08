@@ -6,7 +6,7 @@
 
 import "dotenv/config";
 import { Keypair, TransactionBuilder, Operation, Asset, Horizon } from "@stellar/stellar-sdk";
-import { getNetworkPreset, resolveStellarNetwork } from "@mindvault/registry-client";
+import { getNetworkPreset, resolveStellarNetwork } from "@zentrixpay/registry-client";
 
 async function main() {
   const secretKey = process.env.AGENT_SECRET_KEY;
