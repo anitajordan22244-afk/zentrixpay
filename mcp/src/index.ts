@@ -81,6 +81,7 @@ import { normalizeToolResult, outcomeText, type ToolOutcome } from "./toolResult
 import { advertisedTools, hasOutputSchema } from "./toolSurface.js";
 import { dryRunPublish, dryRunBuy, type DryRunPublishLive } from "./dryRun.js";
 import { correlationHeaders } from "./correlation.js";
+import { API_TOOL_NAMES, createApiToolHandler } from "./apiTools.js";
 import { initAuditLogging } from "./auditLog.js";
 import { REGISTRY_LIST_DEFAULT_LIMIT, REGISTRY_LIST_DEFAULT_START } from "./registryPagination.js";
 import {
@@ -3800,8 +3801,24 @@ function toolMetrics(reset: boolean, format: MetricsExportFormat): string {
 const SELF_VALIDATING_TOOLS = new Set(TOOLS_WITHOUT_ARG_VALIDATION);
 
 function isDispatchableTool(name: string): boolean {
-  return name in TOOL_ARGUMENT_SPECS || SELF_VALIDATING_TOOLS.has(name);
+  return name in TOOL_ARGUMENT_SPECS || SELF_VALIDATING_TOOLS.has(name) || API_TOOL_NAMES.has(name);
 }
+
+// Pay-per-call API tools live in apiTools.ts; they receive the wallet, paid
+// fetch and HTTP plumbing from here rather than importing this module.
+const handleApiTool = createApiToolHandler({
+  baseUrl: () => BASE_URL,
+  network: () => NETWORK,
+  jsonFetch,
+  requireApiKey,
+  requireWallet,
+  paidFetch: (wallet) => makePaidFetch(wallet as AgentWallet),
+  assertWithinCeiling: (price, maxAutoPayUsdc) =>
+    assertAutoPaymentWithinCeiling({ price, maxAutoPayUsdc }),
+  insufficientFundsMessage: (wallet, amount, action) =>
+    insufficientFundsMessage(wallet as AgentWallet, amount, action),
+  recordPurchase,
+});
 
 const STATE_MUTATING_TOOLS = new Set([
   "zentrixpay_setup_wallet",
@@ -3880,6 +3897,7 @@ async function dispatchToolOutcome(
   }
 
   const execute = async (): Promise<ToolOutcome> => {
+    if (API_TOOL_NAMES.has(name)) return handleApiTool(name, rawRecord);
     switch (name) {
       case "zentrixpay_setup_wallet":
         return setupWallet(optionalString(args, "profile"));

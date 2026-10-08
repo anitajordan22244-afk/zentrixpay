@@ -38,6 +38,9 @@
 
 /** Tools that mutate state or spend funds — gated on mainnet. */
 export const MAINNET_GATED_TOOLS = [
+  "zentrixpay_call",
+  "zentrixpay_register_api",
+  "zentrixpay_update_api",
   "zentrixpay_setup_wallet",
   "zentrixpay_repair_sponsored_account",
   "zentrixpay_register",

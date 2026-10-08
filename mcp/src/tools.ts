@@ -14,6 +14,8 @@
  * both directions; the contract test exists so that cannot recur silently.
  */
 
+import { API_TOOL_DEFINITIONS } from "./apiTools.js";
+
 import { catalogFilterInputProperties } from "./catalogFilters.js";
 import {
   AGENT_STATUS_OUTPUT_SCHEMA,
@@ -108,6 +110,7 @@ export interface ToolDefinition {
 }
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
+  ...API_TOOL_DEFINITIONS,
   {
     name: "zentrixpay_setup_wallet",
     description:

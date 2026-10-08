@@ -67,6 +67,7 @@ const POLICIES: readonly PaidConfirmationPolicy[] = ["off", "usdc", "all"];
  * `zentrixpay_publish_batch` pays one verification fee per item in the batch.
  */
 export const USDC_SPENDING_TOOLS = [
+  "zentrixpay_call",
   "zentrixpay_publish",
   "zentrixpay_publish_batch",
   "zentrixpay_buy",
