@@ -146,3 +146,17 @@ export function correlationIdOf(result: ResultWithMeta | null | undefined): stri
 export function correlationSuffix(id: string | undefined = currentCorrelationId()): string {
   return id ? ` [correlation: ${id}]` : "";
 }
+
+/** Header that carries the ID on outbound requests to the API server. */
+export const CORRELATION_HEADER = "x-request-id";
+
+/**
+ * Merge the in-flight call's ID into an outbound header bag.
+ *
+ * The ID is applied last so a caller-supplied value cannot shadow it. Outside
+ * a tool call there is no ID and the headers are returned unchanged.
+ */
+export function correlationHeaders(extra?: Record<string, string>): Record<string, string> {
+  const id = currentCorrelationId();
+  return id ? { ...extra, [CORRELATION_HEADER]: id } : { ...extra };
+}
