@@ -140,11 +140,14 @@ export async function fetchApis(
   signal?: AbortSignal,
   limit = 20,
   offset = 0,
+  tags: string[] = [],
 ): Promise<PublicApi[]> {
   const url = new URL(`${API_BASE}/apis`, window.location.origin);
   if (q.trim()) url.searchParams.set("q", q.trim());
   url.searchParams.set("limit", String(limit));
   url.searchParams.set("offset", String(offset));
+  // ?tag=a&tag=b — all tags must be present on the API (AND semantics).
+  for (const tag of tags) url.searchParams.append("tag", tag);
   return readJson(await fetch(url, { signal }));
 }
 

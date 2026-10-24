@@ -1,23 +1,18 @@
-import { describe, expect, it, vi } from "vitest";
-import {
-  createApiToolHandler,
-  type ApiToolDeps,
-  type ApiToolDefinition,
-} from "./apiTools.js";
-
 /**
- * Handler-level tests for the pay-per-call tools.
+ * Pay-per-call API tool definitions and handler for ZentrixPay MCP.
  *
- * These complement the dispatcher-level integration test by exercising
- * `createApiToolHandler` directly with injected dependencies, so we can assert
- * on the exact guard behavior (method allow-list, auto-pay ceiling, funds
- * short-circuit, mainnet / paid-confirmation guards) and on the side effects
- * (purchase recording, settlement tx hash) without going through the network.
+ * Exports:
+ *   API_TOOL_DEFINITIONS — tool descriptors merged into TOOL_DEFINITIONS in tools.ts
+ *   API_TOOL_NAMES       — Set<string> used by the dispatcher in index.ts
+ *   createApiToolHandler — factory that wires injected deps into a tool dispatcher
  */
 
-import type { ToolDefinition } from "./tools.js";
 import { assertWithinSessionSpendLimit, recordSessionSpend } from "./paymentCeiling.js";
 import { ZENTRIXPAY_CALL_OUTPUT_SCHEMA } from "./outputSchemas.js";
+import type { ToolDefinition } from "./tools.js";
+import type { ApiResponse } from "./apiResponse.js";
+
+// ── Shared schema fragments ───────────────────────────────────────────────────
 
 const API_ID = {
   type: "string",
@@ -25,48 +20,93 @@ const API_ID = {
   examples: ["k3v9x2m1q8w7e6r5t4y3u2i1"],
 };
 
-function makeDeps(overrides: Partial<ApiToolDeps> = {}): ApiToolDeps {
-  const deps: ApiToolDeps = {
-    fetch: vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      headers: new Headers({ "content-type": "application/json" }),
-      json: async () => ({ result: "ok" }),
-      text: async () => JSON.stringify({ result: "ok" }),
-    })) as unknown as ApiToolDeps["fetch"],
-    getBalanceUsdc: vi.fn(async () => 1),
-    pay: vi.fn(async () => ({ txHash: "0xsettlement" })),
-    recordPurchase: vi.fn(async () => undefined),
-    isMainnet: false,
-    confirmPaidCall: undefined,
-    ...overrides,
-  };
-  return deps;
-}
+const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
 
-describe("createApiToolHandler / zentrixpay_call", () => {
-  it("rejects a method not allowed by the API", async () => {
-    const deps = makeDeps();
-    const handler = createApiToolHandler(TOOL, deps);
+const CONFIRM_MAINNET = {
+  type: "boolean",
+  description: "Required on mainnet. Confirm you intend to spend real USDC. Ignored on testnet.",
+} as const;
 
-    const result = await handler({ method: "DELETE" });
+const CONFIRM_PAID = {
+  type: "boolean",
+  description:
+    "Required when the server runs with ZENTRIXPAY_CONFIRM_PAID_OPERATIONS=usdc or =all. Explicitly confirm this call may spend from the agent wallet.",
+} as const;
 
-    expect(result.isError).toBe(true);
-    expect(String(result.content)).toMatch(/method/i);
-    expect(deps.fetch).not.toHaveBeenCalled();
-    expect(deps.pay).not.toHaveBeenCalled();
-    expect(deps.recordPurchase).not.toHaveBeenCalled();
-  });
+const API_FIELDS = {
+  name: { type: "string", description: "API name.", examples: ["Weather API"] },
+  description: {
+    type: "string",
+    description: "Short description shown in the catalog.",
+  },
+  upstreamUrl: {
+    type: "string",
+    description: "The upstream API URL this proxy will forward calls to.",
+    examples: ["https://api.provider.com/v1"],
+  },
+  price: {
+    type: "string",
+    description: "Per-call price in USDC (decimal string).",
+    examples: ["0.01", "0.50"],
+  },
+  allowedMethods: {
+    type: "array",
+    items: { type: "string", enum: [...HTTP_METHODS] },
+    description: "HTTP methods callers may use.",
+    examples: [["GET", "POST"]],
+  },
+  upstreamHeaderName: {
+    type: "string",
+    description: "Name of the secret header injected into upstream requests.",
+  },
+  upstreamHeaderValue: {
+    type: "string",
+    description: "Value of the secret header (stored encrypted).",
+  },
+  tags: {
+    type: "array",
+    items: { type: "string" },
+    description: "Discovery tags attached to the API (e.g. ['weather', 'ai']).",
+    examples: [["weather"], ["ai", "nlp"]],
+  },
+  timeoutMs: {
+    type: "integer",
+    description: "Per-call upstream timeout in milliseconds.",
+    examples: [5000, 15000],
+  },
+  maxResponseBytes: {
+    type: "integer",
+    description: "Maximum upstream response size in bytes.",
+  },
+  listed: {
+    type: "boolean",
+    description: "List or unlist the API in the catalog.",
+  },
+};
+
+// ── Tool definitions ──────────────────────────────────────────────────────────
 
 export const API_TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "zentrixpay_list_apis",
     description:
-      "List pay-per-call APIs in the ZentrixPay catalog, newest first. Optional keyword search over name and description.",
+      "List pay-per-call APIs in the ZentrixPay catalog, newest first. Supports keyword search and tag filtering. Multiple tags are ANDed: all listed tags must be present on the API.",
     inputSchema: {
       type: "object",
       properties: {
-        q: { type: "string", description: "Keyword to search for.", examples: ["weather"] },
+        q: {
+          type: "string",
+          description: "Keyword to search name and description.",
+          examples: ["weather"],
+        },
+        // ?tag=a&tag=b — repeatable; all requested tags must be present on the API.
+        tag: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Filter by tag(s). Repeat for AND semantics: all specified tags must be present on the API. Example: ['ai', 'nlp'] returns only APIs tagged with both 'ai' and 'nlp'.",
+          examples: [["weather"], ["ai", "nlp"]],
+        },
         limit: {
           type: "integer",
           minimum: 1,
@@ -121,7 +161,7 @@ export const API_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         method: {
           type: "string",
-          enum: HTTP_METHODS,
+          enum: [...HTTP_METHODS],
           default: "GET",
           description: "HTTP method. Must be one the API allows.",
         },
@@ -197,7 +237,6 @@ export const API_TOOL_DEFINITIONS: ToolDefinition[] = [
           type: "boolean",
           description: "Turn off health checks (the API is treated as healthy).",
         },
-        listed: { type: "boolean", description: "List or unlist the API." },
         confirmMainnet: CONFIRM_MAINNET,
       },
       required: ["apiId"],
@@ -255,22 +294,44 @@ export const API_TOOL_DEFINITIONS: ToolDefinition[] = [
   },
 ];
 
-    const result = await handler({ method: "POST" });
+export const API_TOOL_NAMES = new Set(API_TOOL_DEFINITIONS.map((t) => t.name));
 
-    expect(result.isError).toBe(true);
-    expect(String(result.content)).toMatch(/ceiling|max/i);
-    expect(deps.fetch).not.toHaveBeenCalled();
-    expect(deps.pay).not.toHaveBeenCalled();
-    expect(deps.recordPurchase).not.toHaveBeenCalled();
-  });
+// ── Handler types ─────────────────────────────────────────────────────────────
 
-  it("short-circuits when funds are insufficient", async () => {
-    const deps = makeDeps({
-      getBalanceUsdc: vi.fn(async () => 0.01),
-    });
-    const handler = createApiToolHandler(TOOL, deps);
+export interface ApiToolDeps {
+  baseUrl: () => string;
+  network: () => string;
+  /** Authenticated JSON fetch to the ZentrixPay server. */
+  jsonFetch: (url: string, init?: RequestInit) => Promise<ApiResponse<any>>;
+  /** Returns the current publisher API key, or throws if not registered. */
+  requireApiKey: () => string;
+  /** Returns the current agent wallet, or throws if not set up. */
+  requireWallet: () => { publicKey: string; secretKey: string };
+  /** Returns a paid-fetch bound to the given wallet (wraps x402 payment). */
+  paidFetch: (wallet: { publicKey: string; secretKey: string }) => typeof fetch;
+  /** Throws when the call price would exceed the configured auto-pay ceiling. */
+  assertWithinCeiling: (price: string, maxAutoPayUsdc: string | undefined) => void;
+  /** Returns an error message string when the wallet lacks enough USDC, null if funded. */
+  insufficientFundsMessage: (
+    wallet: { publicKey: string; secretKey: string },
+    amount: string,
+    action: string,
+  ) => Promise<string | null>;
+  recordPurchase: (purchase: {
+    resourceId: string;
+    amount: string;
+    network: string;
+    txHash: string | null;
+    receiptRef: null;
+    title: string;
+  }) => void;
+}
 
-    const result = await handler({ method: "POST" });
+export type ApiToolDefinition = (typeof API_TOOL_DEFINITIONS)[number];
+
+// ── Internal helpers ──────────────────────────────────────────────────────────
+
+const MAX_BODY_CHARS = 8_000;
 
 /**
  * Binary content-type prefixes and patterns that should not be decoded as text.
@@ -308,49 +369,113 @@ function str(args: Record<string, unknown>, key: string, required = false): stri
   return value;
 }
 
-  it("performs a successful paid call and records the purchase with the settlement tx hash", async () => {
-    const deps = makeDeps();
-    const handler = createApiToolHandler(TOOL, deps);
+function stringMap(args: Record<string, unknown>, key: string): Record<string, string> {
+  const value = args[key];
+  if (value === undefined || value === null) return {};
+  if (typeof value !== "object" || Array.isArray(value)) return {};
+  const result: Record<string, string> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof v === "string") result[k] = v;
+  }
+  return result;
+}
 
-    const result = await handler({ method: "POST", body: { foo: "bar" } });
+/** Extract the settlement transaction hash from the payment-response header. */
+function settlementTx(header: string | null): string | null {
+  if (!header) return null;
+  try {
+    const parsed: unknown = JSON.parse(header);
+    if (parsed && typeof parsed === "object") {
+      const tx = (parsed as Record<string, unknown>).transaction;
+      return typeof tx === "string" ? tx : null;
+    }
+  } catch {
+    // ignore malformed header
+  }
+  return null;
+}
 
-    expect(result.isError).toBeFalsy();
-    expect(deps.fetch).toHaveBeenCalledTimes(1);
-    expect(deps.pay).toHaveBeenCalledTimes(1);
-    expect(deps.recordPurchase).toHaveBeenCalledTimes(1);
+function json(value: unknown): string {
+  return JSON.stringify(value, null, 2);
+}
 
-    const purchaseArg = (deps.recordPurchase as ReturnType<typeof vi.fn>).mock
-      .calls[0][0];
-    expect(purchaseArg).toMatchObject({
-      tool: "zentrixpay_call",
-      txHash: "0xsettlement",
-    });
-  });
+// ── Handler factory ───────────────────────────────────────────────────────────
 
-  it("does not charge or record a purchase when the upstream call fails (>=400)", async () => {
-    const deps = makeDeps({
-      fetch: vi.fn(async () => ({
-        ok: false,
-        status: 500,
-        headers: new Headers({ "content-type": "application/json" }),
-        json: async () => ({ error: "boom" }),
-        text: async () => JSON.stringify({ error: "boom" }),
-      })) as unknown as ApiToolDeps["fetch"],
-    });
-    const handler = createApiToolHandler(TOOL, deps);
+/**
+ * Create the single dispatch function that handles all API tool calls.
+ * Receives all external dependencies via injection so the logic can be
+ * tested without a live server or wallet.
+ *
+ * Returns `(name, args) => Promise<string>` (JSON payload) for most tools,
+ * throwing on unrecoverable errors so the MCP dispatcher can wrap them as
+ * tool errors.
+ */
+export function createApiToolHandler(
+  deps: ApiToolDeps,
+): (name: string, args: Record<string, unknown>) => Promise<string> {
+  const base = () => deps.baseUrl();
 
-    const result = await handler({ method: "POST" });
+  async function getApi(id: string): Promise<{
+    id: string;
+    name: string;
+    price: string;
+    allowedMethods: string[];
+    proxyUrl: string;
+  }> {
+    const res = await deps.jsonFetch(`${base()}/apis/${encodeURIComponent(id)}`);
+    if (!res.ok) {
+      throw new Error(`API not found: ${id} (HTTP ${res.status})`);
+    }
+    return res.data as any;
+  }
 
-    expect(result.isError).toBe(true);
-    expect(deps.pay).not.toHaveBeenCalled();
-    expect(deps.recordPurchase).not.toHaveBeenCalled();
-  });
+  // ── zentrixpay_list_apis ──────────────────────────────────────────────────
 
-  it("rejects unknown arguments", async () => {
-    const deps = makeDeps();
-    const handler = createApiToolHandler(TOOL, deps);
+  async function listApis(args: Record<string, unknown>): Promise<string> {
+    const url = new URL(`${base()}/apis`);
 
-    const result = await handler({ method: "POST", bogus: true });
+    const q = str(args, "q");
+    if (q) url.searchParams.set("q", q);
+
+    // tag: array of strings — forwards as repeated ?tag= query params.
+    // Multiple tags are ANDed server-side (all must match).
+    const rawTags = args.tag;
+    if (rawTags !== undefined && rawTags !== null) {
+      const tags = Array.isArray(rawTags)
+        ? rawTags.filter((t) => typeof t === "string")
+        : typeof rawTags === "string"
+          ? rawTags
+              .split(",")
+              .map((t) => t.trim())
+              .filter(Boolean)
+          : [];
+      for (const tag of tags) url.searchParams.append("tag", tag);
+    }
+
+    const limit = args.limit !== undefined ? Number(args.limit) : 20;
+    const offset = args.offset !== undefined ? Number(args.offset) : 0;
+    url.searchParams.set("limit", String(limit));
+    url.searchParams.set("offset", String(offset));
+
+    const res = await deps.jsonFetch(url.toString());
+    if (!res.ok) throw new Error(`Failed to list APIs (HTTP ${res.status})`);
+    return json(res.data);
+  }
+
+  // ── zentrixpay_api_info ───────────────────────────────────────────────────
+
+  async function apiInfo(args: Record<string, unknown>): Promise<string> {
+    const id = str(args, "apiId", true)!;
+    const api = await getApi(id);
+    return json(api);
+  }
+
+  // ── zentrixpay_call ───────────────────────────────────────────────────────
+
+  async function call(args: Record<string, unknown>): Promise<string> {
+    const id = str(args, "apiId", true)!;
+    const method = (str(args, "method") ?? "GET").toUpperCase();
+    const wallet = deps.requireWallet();
 
     const api = await getApi(id);
     if (!api.allowedMethods.includes(method)) {
@@ -377,19 +502,24 @@ function str(args: Record<string, unknown>, key: string, required = false): stri
     deps.assertWithinCeiling(api.price, str(args, "maxAutoPayUsdc"));
     assertWithinSessionSpendLimit({ price: api.price });
 
-  it("blocks paid calls on mainnet without explicit confirmation", async () => {
-    const deps = makeDeps({ isMainnet: true });
-    const handler = createApiToolHandler(TOOL, deps);
+    const insufficientMsg = await deps.insufficientFundsMessage(wallet, api.price, "call this API");
+    if (insufficientMsg) return insufficientMsg;
 
-    const result = await handler({ method: "POST" });
+    const extraHeaders = stringMap(args, "headers");
+    const rawBody = args.body;
+    const headers: Record<string, string> = { ...extraHeaders };
+    let body: string | undefined;
+    if (rawBody !== undefined && rawBody !== null) {
+      if (typeof rawBody === "string") {
+        body = rawBody;
+      } else {
+        body = JSON.stringify(rawBody);
+        headers["content-type"] = "application/json";
+      }
+    }
 
-    expect(result.isError).toBe(true);
-    expect(String(result.content)).toMatch(/mainnet|confirm/i);
-    expect(deps.pay).not.toHaveBeenCalled();
-    expect(deps.recordPurchase).not.toHaveBeenCalled();
-  });
-
-    const res = await deps.paidFetch(wallet)(url.toString(), { method, headers, body });
+    const paidFetch = deps.paidFetch(wallet);
+    const res = await paidFetch(url.toString(), { method, headers, body });
     const contentType = res.headers.get("content-type");
     const charged = res.status < 400;
     const txHash = settlementTx(
@@ -442,16 +572,129 @@ function str(args: Record<string, unknown>, key: string, required = false): stri
     });
   }
 
-  it("allows a paid call on mainnet once the paid-confirmation guard approves", async () => {
-    const confirmPaidCall = vi.fn(async () => true);
-    const deps = makeDeps({ isMainnet: true, confirmPaidCall });
-    const handler = createApiToolHandler(TOOL, deps);
+  // ── Provider management tools ─────────────────────────────────────────────
 
-    const result = await handler({ method: "POST" });
+  async function registerApi(args: Record<string, unknown>): Promise<string> {
+    const apiKey = deps.requireApiKey();
+    const body: Record<string, unknown> = {
+      name: str(args, "name", true),
+      upstreamUrl: str(args, "upstreamUrl", true),
+      price: str(args, "price", true),
+    };
+    if (str(args, "description")) body.description = str(args, "description");
+    if (Array.isArray(args.allowedMethods)) body.allowedMethods = args.allowedMethods;
+    if (Array.isArray(args.tags)) body.tags = args.tags;
+    if (args.timeoutMs !== undefined) body.timeoutMs = Number(args.timeoutMs);
 
-    expect(result.isError).toBeFalsy();
-    expect(confirmPaidCall).toHaveBeenCalled();
-    expect(deps.pay).toHaveBeenCalledTimes(1);
-    expect(deps.recordPurchase).toHaveBeenCalledTimes(1);
-  });
-});
+    const headerName = str(args, "upstreamHeaderName");
+    const headerValue = str(args, "upstreamHeaderValue");
+    if (headerName && headerValue) {
+      body.upstreamHeader = { name: headerName, value: headerValue };
+    } else if (headerName || headerValue) {
+      throw new Error("upstreamHeaderName and upstreamHeaderValue must be provided together.");
+    }
+
+    const res = await deps.jsonFetch(`${base()}/apis`, {
+      method: "POST",
+      headers: { "x-api-key": apiKey, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok)
+      throw new Error(`Failed to register API (HTTP ${res.status}): ${JSON.stringify(res.data)}`);
+    return json(res.data);
+  }
+
+  async function updateApi(args: Record<string, unknown>): Promise<string> {
+    const apiKey = deps.requireApiKey();
+    const id = str(args, "apiId", true)!;
+    const body: Record<string, unknown> = {};
+
+    if (str(args, "name")) body.name = str(args, "name");
+    if (str(args, "description") !== undefined) body.description = str(args, "description");
+    if (str(args, "upstreamUrl")) body.upstreamUrl = str(args, "upstreamUrl");
+    if (str(args, "price")) body.price = str(args, "price");
+    if (Array.isArray(args.allowedMethods)) body.allowedMethods = args.allowedMethods;
+    if (Array.isArray(args.tags)) body.tags = args.tags;
+    if (args.listed !== undefined) body.listed = Boolean(args.listed);
+    if (args.timeoutMs !== undefined) body.timeoutMs = Number(args.timeoutMs);
+    if (args.removeUpstreamHeader === true) body.upstreamHeader = null;
+
+    const headerName = str(args, "upstreamHeaderName");
+    const headerValue = str(args, "upstreamHeaderValue");
+    if (headerName && headerValue) {
+      body.upstreamHeader = { name: headerName, value: headerValue };
+    } else if (headerName || headerValue) {
+      throw new Error("upstreamHeaderName and upstreamHeaderValue must be provided together.");
+    }
+
+    const res = await deps.jsonFetch(`${base()}/apis/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "x-api-key": apiKey, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok)
+      throw new Error(`Failed to update API (HTTP ${res.status}): ${JSON.stringify(res.data)}`);
+    return json(res.data);
+  }
+
+  async function verifyApiOwnership(args: Record<string, unknown>): Promise<string> {
+    const apiKey = deps.requireApiKey();
+    const id = str(args, "apiId", true)!;
+    const res = await deps.jsonFetch(`${base()}/apis/${encodeURIComponent(id)}/verify-ownership`, {
+      method: "POST",
+      headers: { "x-api-key": apiKey },
+    });
+    if (!res.ok)
+      throw new Error(
+        `Ownership verification failed (HTTP ${res.status}): ${JSON.stringify(res.data)}`,
+      );
+    return json(res.data);
+  }
+
+  async function myApis(): Promise<string> {
+    const apiKey = deps.requireApiKey();
+    const res = await deps.jsonFetch(`${base()}/publishers/me/apis`, {
+      headers: { "x-api-key": apiKey },
+    });
+    if (!res.ok) throw new Error(`Failed to list your APIs (HTTP ${res.status})`);
+    return json(res.data);
+  }
+
+  async function apiStats(args: Record<string, unknown>): Promise<string> {
+    const apiKey = deps.requireApiKey();
+    const id = str(args, "apiId", true)!;
+    const res = await deps.jsonFetch(`${base()}/apis/${encodeURIComponent(id)}/stats`, {
+      headers: { "x-api-key": apiKey },
+    });
+    if (!res.ok) throw new Error(`Failed to get API stats (HTTP ${res.status})`);
+    return json(res.data);
+  }
+
+  // ── Dispatcher ────────────────────────────────────────────────────────────
+
+  return async function handleApiTool(
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<string> {
+    switch (name) {
+      case "zentrixpay_list_apis":
+        return listApis(args);
+      case "zentrixpay_api_info":
+        return apiInfo(args);
+      case "zentrixpay_call":
+        return call(args);
+      case "zentrixpay_register_api":
+        return registerApi(args);
+      case "zentrixpay_update_api":
+        return updateApi(args);
+      case "zentrixpay_verify_api_ownership":
+        return verifyApiOwnership(args);
+      case "zentrixpay_my_apis":
+        return myApis();
+      case "zentrixpay_api_stats":
+        return apiStats(args);
+      default:
+        throw new Error(`Unknown API tool: ${name}`);
+    }
+  };
+}

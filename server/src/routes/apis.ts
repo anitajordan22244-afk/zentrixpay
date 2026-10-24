@@ -69,17 +69,15 @@ import { decryptSecret } from "../utils/secretBox.js";
 import { stroopsToUsdc, usdcToStroops } from "../utils/usdc.js";
 import { getLogger } from "../lib/logger.js";
 import { config, upstreamKeyRing } from "../config.js";
+import { ProxyBufferSemaphore, proxyBufferConcurrency } from "../middleware/proxyBuffer.js";
 
 const router = Router();
 
 function apiCreditBundlePrice(api: ApiRow, calls: number): string {
-  const highestCallPrice = (api.priceRules ?? []).reduce(
-    (highest, rule) => {
-      const rulePrice = usdcToStroops(rule.price);
-      return rulePrice > highest ? rulePrice : highest;
-    },
-    usdcToStroops(api.price),
-  );
+  const highestCallPrice = (api.priceRules ?? []).reduce((highest, rule) => {
+    const rulePrice = usdcToStroops(rule.price);
+    return rulePrice > highest ? rulePrice : highest;
+  }, usdcToStroops(api.price));
   return stroopsToUsdc(highestCallPrice * BigInt(calls));
 }
 
@@ -296,15 +294,14 @@ export function buildUpstreamUrl(
 
 function decodeQueryPart(part: string): string {
   try {
-    const decoded = Buffer.from(raw, 'base64').toString('utf8');
+    const decoded = Buffer.from(raw, "base64").toString("utf8");
     const parsed = JSON.parse(decoded);
-    if (parsed && typeof parsed === 'object') {
+    if (parsed && typeof parsed === "object") {
       return {
-        success: typeof parsed.success === 'boolean' ? parsed.success : undefined,
-        transaction:
-          typeof parsed.transaction === 'string' ? parsed.transaction : undefined,
-        network: typeof parsed.network === 'string' ? parsed.network : undefined,
-        payer: typeof parsed.payer === 'string' ? parsed.payer : undefined,
+        success: typeof parsed.success === "boolean" ? parsed.success : undefined,
+        transaction: typeof parsed.transaction === "string" ? parsed.transaction : undefined,
+        network: typeof parsed.network === "string" ? parsed.network : undefined,
+        payer: typeof parsed.payer === "string" ? parsed.payer : undefined,
       };
     }
   } catch {
@@ -320,13 +317,12 @@ function decodeQueryPart(part: string): string {
  */
 function resolvePayer(req: Request, res: Response): string {
   const settlement = settlementFrom(res);
-  if (settlement.payer && settlement.payer !== 'unknown') {
+  if (settlement.payer && settlement.payer !== "unknown") {
     return settlement.payer;
   }
-  const signature =
-    req.get('PAYMENT-SIGNATURE') || req.get('X-PAYMENT') || undefined;
+  const signature = req.get("PAYMENT-SIGNATURE") || req.get("X-PAYMENT") || undefined;
   const parsed = parsePayerFromXPayment(signature);
-  return parsed || 'unknown';
+  return parsed || "unknown";
 }
 
 /**
@@ -360,7 +356,7 @@ export async function finishHandler(req: Request, res: Response) {
       createdAt: new Date(),
     });
   } catch (err) {
-    console.error('Failed to record api call', err);
+    console.error("Failed to record api call", err);
   }
 }
 
@@ -368,7 +364,7 @@ export async function finishHandler(req: Request, res: Response) {
  * GET /apis/:id/stats
  * Returns aggregate stats plus recent calls including settlement_tx.
  */
-router.get('/:id/stats', async (req: Request, res: Response) => {
+router.get("/:id/stats", async (req: Request, res: Response) => {
   const apiId = req.params.id;
   const sinceParam = req.query.since as string | undefined;
   const since = sinceParam ? new Date(sinceParam) : undefined;
@@ -376,33 +372,18 @@ router.get('/:id/stats', async (req: Request, res: Response) => {
   try {
     const [api] = await db.select().from(apis).where(eq(apis.id, apiId)).limit(1);
     if (!api) {
-      return res.status(404).json({ error: 'API not found' });
+      return res.status(404).json({ error: "API not found" });
     }
-    const settlement = settlementFrom(res);
-    const paymentResponse = res.getHeader("payment-response");
-    const keep = stored.body.length <= config.PROXY_IDEMPOTENCY_MAX_BODY_BYTES;
-    store.set(ctx.scopedKey, {
-      inProgress: false,
-      fingerprint: ctx.fingerprint,
-      paymentHash: ctx.paymentHash,
-      txHash: settlement.transaction ?? null,
-      response: keep
-        ? {
-            ...stored,
-            headers:
-              typeof paymentResponse === "string"
-                ? { ...stored.headers, "payment-response": paymentResponse }
-                : stored.headers,
-          }
-        : null,
-    });
-  };
-  res.once("finish", finalize);
-  res.once("close", () => {
-    if (!res.writableFinished) store.delete(ctx.scopedKey);
-  });
-  next();
-}
+    const [totals, recentCalls] = await Promise.all([
+      getApiStats(api.id, since),
+      listRecentCalls(api.id, 50),
+    ]);
+    return res.json({ apiId: api.id, ...totals, recentCalls });
+  } catch (err) {
+    console.error("Failed to fetch API stats", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
 
 const UPSTREAM_ERROR_STATUS = { blocked: 502, network: 502, too_large: 502, timeout: 504 } as const;
 
@@ -414,12 +395,20 @@ function prepareUpstreamRequest(
 ): UpstreamSecrets {
   const secrets: UpstreamSecrets = { values: [] };
   if (api.upstreamHeaderName && api.upstreamHeaderValueEnc && upstreamKeyRing.length > 0) {
-    const value = decryptSecret(api.upstreamHeaderValueEnc, upstreamKeyRing, config.UPSTREAM_SECRET_KEY);
+    const value = decryptSecret(
+      api.upstreamHeaderValueEnc,
+      upstreamKeyRing,
+      config.UPSTREAM_SECRET_KEY,
+    );
     headers[api.upstreamHeaderName] = value;
     secrets.values.push(value);
   }
   if (api.upstreamQueryName && api.upstreamQueryValueEnc && upstreamKeyRing.length > 0) {
-    const value = decryptSecret(api.upstreamQueryValueEnc, upstreamKeyRing, config.UPSTREAM_SECRET_KEY);
+    const value = decryptSecret(
+      api.upstreamQueryValueEnc,
+      upstreamKeyRing,
+      config.UPSTREAM_SECRET_KEY,
+    );
     withSecretQueryParam(target, api.upstreamQueryName, value);
     secrets.queryName = api.upstreamQueryName;
     secrets.values.push(value);
@@ -448,10 +437,9 @@ async function proxyHandler(req: Request, res: Response) {
     const settlement = settlementFrom(res);
     const charged = res.statusCode < 400;
     const callId = randomUUID();
-    const call = {
+    recordApiCall({
       callId,
-      payerAddress:
-        (res.locals.creditPayer as string | undefined) ?? payerFrom(req, settlement),
+      payerAddress: (res.locals.creditPayer as string | undefined) ?? payerFrom(req, settlement),
       amount: (res.locals.apiCallPrice as string | undefined) ?? api.price,
       method: req.method,
       // Stored minimized: identifiers and the query string are dropped (#144).
@@ -490,7 +478,12 @@ async function proxyHandler(req: Request, res: Response) {
     } catch (err) {
       if (err instanceof UpstreamError) {
         getLogger().warn(
-          { event: "api_upstream_stream_failed", apiId: api.id, kind: err.kind, error: err.message },
+          {
+            event: "api_upstream_stream_failed",
+            apiId: api.id,
+            kind: err.kind,
+            error: err.message,
+          },
           "upstream stream failed before first byte; caller not charged",
         );
         res
@@ -506,9 +499,7 @@ async function proxyHandler(req: Request, res: Response) {
     res.status(upstream.status);
     for (const [name, value] of Object.entries(responseHeaders)) {
       const rewritten =
-        typeof value === "string"
-          ? rewriteResponseHeader(name, value, api, secrets)
-          : value;
+        typeof value === "string" ? rewriteResponseHeader(name, value, api, secrets) : value;
       res.setHeader(name, rewritten);
     }
 
@@ -556,9 +547,7 @@ async function proxyHandler(req: Request, res: Response) {
   const responseHeaders: StoredProxyResponse["headers"] = {};
   for (const [name, value] of Object.entries(filterResponseHeaders(upstream.headers))) {
     responseHeaders[name] =
-      typeof value === "string"
-        ? rewriteResponseHeader(name, value, api, secrets)
-        : value;
+      typeof value === "string" ? rewriteResponseHeader(name, value, api, secrets) : value;
   }
   // Kept for Idempotency-Key replay once the call is known to be charged.
   res.locals.proxyResponse = {
@@ -584,6 +573,13 @@ const proxyIpRateLimit = createIpRateLimiter(
   config.PROXY_402_RATE_LIMIT_WINDOW_MS,
   "proxy_ip",
 );
+
+// Issue #132: limit concurrent buffered proxy responses so aggregate memory
+// use is bounded. The semaphore is applied early in the proxy chain so that
+// rejected requests are never charged.  A 503 with Retry-After: 1 is returned
+// when capacity is exhausted so the x402 client (and any caller) can retry.
+export const proxyBufferSemaphore = new ProxyBufferSemaphore(config.PROXY_BUFFER_CONCURRENCY);
+const proxyBufferLimit = proxyBufferConcurrency(proxyBufferSemaphore);
 
 // Issue #30: POST /api/:id/pass — buy a time-limited access pass via x402.
 // The caller pays passPrice once; subsequent calls are free until the pass
@@ -611,7 +607,9 @@ router.post("/api/:id/pass", loadProxiedApi, async (req: Request, res: Response)
     const price = api.passPrice;
 
     try {
-      const resourceServer = await (await import("../lib/x402.js")).sharedX402ResourceServer({
+      const resourceServer = await (
+        await import("../lib/x402.js")
+      ).sharedX402ResourceServer({
         network,
         payTo,
         price,
@@ -655,7 +653,11 @@ router.post("/api/:id/pass", loadProxiedApi, async (req: Request, res: Response)
   // re-purchase within the same window).
   const existing = await getActivePass(api.id, payerAddress);
   if (existing) {
-    res.json({ passId: existing.id, expiresAt: existing.expiresAt, message: "Pass already active" });
+    res.json({
+      passId: existing.id,
+      expiresAt: existing.expiresAt,
+      message: "Pass already active",
+    });
     return;
   }
 
@@ -677,7 +679,10 @@ router.post("/api/:id/pass", loadProxiedApi, async (req: Request, res: Response)
       message: "Pass activated",
     });
   } catch (err) {
-    getLogger().error({ event: "api_pass_create_failed", apiId: api.id, err }, "failed to create pass");
+    getLogger().error(
+      { event: "api_pass_create_failed", apiId: api.id, err },
+      "failed to create pass",
+    );
     res.status(500).json({ error: "Failed to create pass" });
   }
 });
@@ -686,6 +691,7 @@ router.post("/api/:id/pass", loadProxiedApi, async (req: Request, res: Response)
 router.all(
   "/api/:id{/*path}",
   proxyIpRateLimit,
+  proxyBufferLimit,
   loadProxiedApi,
   express.raw({ type: () => true, limit: config.PROXY_MAX_REQUEST_BODY }),
   checkPayerAccess,
