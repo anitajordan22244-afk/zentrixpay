@@ -1,4 +1,4 @@
-import dotenv from 'dotenv';
+import dotenv from "dotenv";
 
 dotenv.config();
 
@@ -99,6 +99,11 @@ const envSchema = z.object({
     .int()
     .positive()
     .default(256 * 1024),
+  // Issue #132: maximum number of proxy responses that may be buffered in memory
+  // concurrently. When the limit is reached new requests receive a 503 with a
+  // Retry-After: 1 header so callers (and the x402 client) can retry.
+  // 0 disables the limit (unbounded, the pre-#132 behaviour).
+  PROXY_BUFFER_CONCURRENCY: z.coerce.number().int().min(0).default(64),
   // Local development only: allow upstreams on loopback/private networks.
   PROXY_ALLOW_PRIVATE_UPSTREAMS: z
     .enum(["true", "false"])
@@ -159,6 +164,11 @@ const networkIssues = validateNetworkConfig({
   usdcSacContractId: parsed.data.USDC_CONTRACT_ID,
   registryContractId: parsed.data.REGISTRY_CONTRACT_ID,
 });
+if (networkIssues.length > 0) {
+  for (const issue of networkIssues) {
+    rootLogger.warn({ event: "network_config_issue", field: issue.field }, issue.message);
+  }
+}
 
 // ── Mainnet safety guard (#51) ────────────────────────────────────────────────
 // Refuse to start if the server is configured for mainnet but has settings that

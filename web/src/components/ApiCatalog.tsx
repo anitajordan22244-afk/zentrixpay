@@ -17,10 +17,27 @@ function mergePage(current: PublicApi[], page: PublicApi[]): PublicApi[] {
   return [...current, ...page.filter((api) => !seen.has(api.id))];
 }
 
+/**
+ * Parse a raw tag input string into a deduplicated, normalised array of tags.
+ * Tags are comma-separated, trimmed and lowercased (matching server schema).
+ */
+function parseTags(raw: string): string[] {
+  return [
+    ...new Set(
+      raw
+        .split(",")
+        .map((t) => t.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  ];
+}
+
 export function ApiCatalog({ onTry, onView, onCopy }: Props) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
+  const [tagInput, setTagInput] = useState("");
   const [debounced, setDebounced] = useState("");
+  const [debouncedTags, setDebouncedTags] = useState<string[]>([]);
   const [items, setItems] = useState<PublicApi[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [status, setStatus] = useState<"loading" | "idle" | "error">("loading");
@@ -32,22 +49,29 @@ export function ApiCatalog({ onTry, onView, onCopy }: Props) {
   // The search the shown items belong to, and where its next page starts.
   // Kept in a ref so "Load more" always pages the same query as the list on
   // screen, even while the user is typing a new one.
-  const pagingRef = useRef({ query: "", nextOffset: 0 });
+  const pagingRef = useRef({ query: "", tags: [] as string[], nextOffset: 0 });
   // Aborts whichever request is in flight when the search changes.
   const abortRef = useRef<AbortController | null>(null);
 
+  // Debounce text query
   useEffect(() => {
     const id = setTimeout(() => setDebounced(query.trim()), 250);
     return () => clearTimeout(id);
   }, [query]);
 
-  // First page for each search.
+  // Debounce tag input
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedTags(parseTags(tagInput)), 250);
+    return () => clearTimeout(id);
+  }, [tagInput]);
+
+  // First page for each search / tag change.
   useEffect(() => {
     abortRef.current?.abort();
     const ctrl = new AbortController();
     abortRef.current = ctrl;
 
-    pagingRef.current = { query: debounced, nextOffset: 0 };
+    pagingRef.current = { query: debounced, tags: debouncedTags, nextOffset: 0 };
     setItems([]);
     setHasMore(false);
     setStatus("loading");
@@ -57,7 +81,7 @@ export function ApiCatalog({ onTry, onView, onCopy }: Props) {
 
     // One extra row tells us whether another page exists, so there is no
     // "Load more" button that leads to an empty page.
-    fetchApis(debounced, ctrl.signal, CATALOG_PAGE_SIZE + 1, 0)
+    fetchApis(debounced, ctrl.signal, CATALOG_PAGE_SIZE + 1, 0, debouncedTags)
       .then((page) => {
         if (ctrl.signal.aborted) return;
         setItems(mergePage([], page.slice(0, CATALOG_PAGE_SIZE)));
@@ -72,16 +96,22 @@ export function ApiCatalog({ onTry, onView, onCopy }: Props) {
       });
 
     return () => ctrl.abort();
-  }, [debounced, reloadKey]);
+  }, [debounced, debouncedTags, reloadKey]);
 
   async function loadMore() {
     if (loadingMore) return;
     const ctrl = abortRef.current;
-    const { query: pageQuery, nextOffset } = pagingRef.current;
+    const { query: pageQuery, tags: pageTags, nextOffset } = pagingRef.current;
     setLoadingMore(true);
     setMoreError(null);
     try {
-      const page = await fetchApis(pageQuery, ctrl?.signal, CATALOG_PAGE_SIZE + 1, nextOffset);
+      const page = await fetchApis(
+        pageQuery,
+        ctrl?.signal,
+        CATALOG_PAGE_SIZE + 1,
+        nextOffset,
+        pageTags,
+      );
       // The search changed while this page was loading: drop it.
       if (ctrl?.signal.aborted || pagingRef.current.query !== pageQuery) return;
       setItems((prev) => mergePage(prev, page.slice(0, CATALOG_PAGE_SIZE)));
@@ -96,21 +126,68 @@ export function ApiCatalog({ onTry, onView, onCopy }: Props) {
   }
 
   const loaded = status === "idle";
+  const activeTags = debouncedTags;
 
   return (
     <section aria-labelledby="catalog-heading">
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <h2 id="catalog-heading" className="text-lg font-semibold text-gray-900 dark:text-gray-100">
           {t("catalog.heading")}
         </h2>
-        <input
-          type="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder={t("catalog.search_placeholder")}
-          aria-label={t("catalog.search_label")}
-          className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 sm:w-72"
-        />
+        <div className="flex flex-col gap-2 sm:w-72">
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t("catalog.search_placeholder")}
+            aria-label={t("catalog.search_label")}
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+          />
+          <input
+            type="text"
+            value={tagInput}
+            onChange={(e) => setTagInput(e.target.value)}
+            placeholder={t("catalog.tag_filter_placeholder", {
+              defaultValue: "Filter by tags (e.g. ai, nlp)",
+            })}
+            aria-label={t("catalog.tag_filter_label", {
+              defaultValue: "Filter by tags (comma-separated; all must match)",
+            })}
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+          />
+          {activeTags.length > 0 && (
+            <div className="flex flex-wrap gap-1" aria-label="Active tag filters">
+              {activeTags.map((tag) => (
+                <span
+                  key={tag}
+                  className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300"
+                >
+                  #{tag}
+                  <button
+                    aria-label={`Remove tag filter: ${tag}`}
+                    onClick={() =>
+                      setTagInput((prev) =>
+                        parseTags(prev)
+                          .filter((t) => t !== tag)
+                          .join(", "),
+                      )
+                    }
+                    className="ml-0.5 text-indigo-500 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-100"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+              <button
+                onClick={() => setTagInput("")}
+                className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                aria-label="Clear all tag filters"
+              >
+                {t("catalog.clear_tags", { defaultValue: "Clear all" })}
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {status === "error" && (
@@ -130,9 +207,14 @@ export function ApiCatalog({ onTry, onView, onCopy }: Props) {
 
       {loaded && items.length === 0 && (
         <p className="rounded-xl border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
-          {debounced
-            ? t("catalog.empty_no_match", { query: debounced })
-            : t("catalog.empty_no_apis")}
+          {activeTags.length > 0
+            ? t("catalog.empty_no_match_tags", {
+                defaultValue: `No APIs matched tags: ${activeTags.map((t) => `#${t}`).join(", ")}`,
+                tags: activeTags.map((t) => `#${t}`).join(", "),
+              })
+            : debounced
+              ? t("catalog.empty_no_match", { query: debounced })
+              : t("catalog.empty_no_apis")}
         </p>
       )}
 
@@ -169,12 +251,22 @@ export function ApiCatalog({ onTry, onView, onCopy }: Props) {
                     </span>
                   ))}
                   {api.tags.map((tag) => (
-                    <span
+                    <button
                       key={tag}
-                      className="rounded bg-emerald-50 px-1.5 py-0.5 text-xs text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
+                      onClick={() => {
+                        // Clicking a tag adds it to the active filter.
+                        setTagInput((prev) => {
+                          const current = parseTags(prev);
+                          if (current.includes(tag)) return prev;
+                          return [...current, tag].join(", ");
+                        });
+                      }}
+                      aria-label={`Filter by tag: ${tag}`}
+                      title={`Filter by #${tag}`}
+                      className="rounded bg-emerald-50 px-1.5 py-0.5 text-xs text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-900/30 dark:text-emerald-300 dark:hover:bg-emerald-900/60"
                     >
                       #{tag}
-                    </span>
+                    </button>
                   ))}
                 </div>
                 <div className="mt-auto flex gap-2">
