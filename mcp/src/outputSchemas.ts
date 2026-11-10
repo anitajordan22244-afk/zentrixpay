@@ -736,6 +736,12 @@ export const ZENTRIXPAY_CALL_OUTPUT_SCHEMA = {
     amount: { type: "string" },
     txHash: { type: ["string", "null"] },
     contentType: { type: ["string", "null"] },
+    headers: {
+      type: "object",
+      additionalProperties: { type: "string" },
+      description:
+        "Allowlisted safe response metadata headers (pagination, rate-limit, retry, caching, and request correlation). Excludes cookies, hop-by-hop headers, and payment challenge headers.",
+    },
     /**
      * Text responses: a string (possibly truncated).
      * Binary responses: an object with encoding, sizeBytes and base64 data (#101).
@@ -755,7 +761,17 @@ export const ZENTRIXPAY_CALL_OUTPUT_SCHEMA = {
       ],
     },
   },
-  required: ["api", "request", "status", "charged", "amount", "txHash", "contentType", "body"],
+  required: [
+    "api",
+    "request",
+    "status",
+    "charged",
+    "amount",
+    "txHash",
+    "contentType",
+    "headers",
+    "body",
+  ],
 } as const;
 
 /** Tools that must stay text-only (no schema, no structuredContent). */

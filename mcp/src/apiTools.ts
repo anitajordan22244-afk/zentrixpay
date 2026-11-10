@@ -334,6 +334,126 @@ export type ApiToolDefinition = (typeof API_TOOL_DEFINITIONS)[number];
 const MAX_BODY_CHARS = 8_000;
 
 /**
+ * Documented allowlist of safe upstream response headers exposed by `zentrixpay_call` (#146).
+ *
+ * Covers pagination, retry/rate-limit guidance, caching/representation metadata,
+ * and request correlation identifiers.
+ */
+export const SAFE_RESPONSE_HEADERS: ReadonlySet<string> = new Set([
+  // Retry & rate-limiting
+  "retry-after",
+  "ratelimit",
+  "ratelimit-limit",
+  "ratelimit-remaining",
+  "ratelimit-reset",
+  "ratelimit-policy",
+  "x-ratelimit-limit",
+  "x-ratelimit-remaining",
+  "x-ratelimit-reset",
+  "x-ratelimit-used",
+  "x-ratelimit-resource",
+  // Pagination & collection metadata
+  "link",
+  "content-range",
+  "x-total-count",
+  "x-page",
+  "x-per-page",
+  "x-next-page",
+  "x-prev-page",
+  "x-total-pages",
+  "x-cursor",
+  "x-next-cursor",
+  // Representation & caching metadata
+  "content-type",
+  "content-length",
+  "content-encoding",
+  "content-language",
+  "content-disposition",
+  "etag",
+  "last-modified",
+  "cache-control",
+  "expires",
+  "age",
+  "vary",
+  "location",
+  // Request correlation
+  "x-request-id",
+  "x-correlation-id",
+  "x-trace-id",
+]);
+
+/** Safe rate-limit header prefixes accepted in addition to exact allowlist names (#146). */
+export const SAFE_RESPONSE_HEADER_PREFIXES = ["x-ratelimit-", "ratelimit-"] as const;
+
+/**
+ * Explicit blocklist of sensitive headers that must never be surfaced in
+ * `zentrixpay_call` metadata: cookies, hop-by-hop transport headers, and
+ * payment challenge / settlement / authentication headers (#146).
+ */
+export const EXCLUDED_RESPONSE_HEADERS: ReadonlySet<string> = new Set([
+  // Cookies
+  "set-cookie",
+  "set-cookie2",
+  "cookie",
+  // Hop-by-hop headers (RFC 9110 §7.6.1)
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "proxy-connection",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+  // Payment challenge / settlement / auth headers
+  "payment-required",
+  "payment-response",
+  "payment-signature",
+  "x-payment",
+  "x-payment-required",
+  "x-payment-response",
+  "www-authenticate",
+  "authorization",
+  "x-api-key",
+]);
+
+/**
+ * Filter upstream response headers down to the documented safe allowlist while
+ * strictly excluding cookies, hop-by-hop headers (including headers named in
+ * `Connection`), and payment challenge headers (#146).
+ */
+export function extractSafeResponseHeaders(headers: Headers): Record<string, string> {
+  const connectionTokens = new Set(
+    (headers.get("connection") ?? "")
+      .split(",")
+      .map((token) => token.trim().toLowerCase())
+      .filter(Boolean),
+  );
+
+  const safeEntries: [string, string][] = [];
+  headers.forEach((value, rawName) => {
+    const name = rawName.trim().toLowerCase();
+    if (!name) return;
+    if (
+      EXCLUDED_RESPONSE_HEADERS.has(name) ||
+      connectionTokens.has(name) ||
+      name.startsWith("x-payment")
+    ) {
+      return;
+    }
+    const isAllowed =
+      SAFE_RESPONSE_HEADERS.has(name) ||
+      SAFE_RESPONSE_HEADER_PREFIXES.some((prefix) => name.startsWith(prefix));
+    if (isAllowed) {
+      safeEntries.push([name, value]);
+    }
+  });
+
+  safeEntries.sort(([a], [b]) => a.localeCompare(b));
+  return Object.fromEntries(safeEntries);
+}
+
+/**
  * Binary content-type prefixes and patterns that should not be decoded as text.
  * When matched, `call()` returns size, type and a base64 payload instead of
  * attempting to render the raw bytes as a string (#101).
@@ -521,6 +641,7 @@ export function createApiToolHandler(
     const paidFetch = deps.paidFetch(wallet);
     const res = await paidFetch(url.toString(), { method, headers, body });
     const contentType = res.headers.get("content-type");
+    const responseHeaders = extractSafeResponseHeaders(res.headers);
     const charged = res.status < 400;
     const txHash = settlementTx(
       res.headers.get("payment-response") ?? res.headers.get("x-payment-response"),
@@ -568,6 +689,7 @@ export function createApiToolHandler(
       amount: charged ? `${api.price} USDC` : "0 USDC (not charged: the call failed)",
       txHash,
       contentType,
+      headers: responseHeaders,
       body: bodyPayload,
     });
   }

@@ -19,6 +19,7 @@ import {
   USE_PROFILE_OUTPUT_SCHEMA,
   WALLET_INFO_OUTPUT_SCHEMA,
   WALLET_SETUP_OUTPUT_SCHEMA,
+  ZENTRIXPAY_CALL_OUTPUT_SCHEMA,
 } from "./outputSchemas.js";
 import { TOOL_DEFINITIONS } from "./tools.js";
 
@@ -52,7 +53,6 @@ describe("structured tools advertise a schema", () => {
       expect(tool.outputSchema, `${tool.name} should advertise outputSchema`).toBeDefined();
     }
   });
-
 });
 
 describe("representative payloads match advertised required keys", () => {
@@ -155,6 +155,20 @@ describe("representative payloads match advertised required keys", () => {
     assertKeys(TEXT_RESULT_SCHEMA, {
       status: "text",
       message: "Provide a transaction hash to look up.",
+    });
+  });
+
+  it("zentrixpay_call includes safe response metadata headers (#146)", () => {
+    assertKeys(ZENTRIXPAY_CALL_OUTPUT_SCHEMA, {
+      api: { id: "api1", name: "Weather" },
+      request: { method: "GET", url: "https://gw.test/api/api1" },
+      status: 200,
+      charged: true,
+      amount: "0.01 USDC",
+      txHash: "tx-123",
+      contentType: "application/json",
+      headers: { "retry-after": "30", "x-total-count": "10" },
+      body: '{"temp":30}',
     });
   });
 });

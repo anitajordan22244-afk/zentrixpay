@@ -1,5 +1,12 @@
 import { describe, it, expect, vi } from "vitest";
-import { API_TOOL_DEFINITIONS, createApiToolHandler, type ApiToolDeps } from "./apiTools.js";
+import {
+  API_TOOL_DEFINITIONS,
+  EXCLUDED_RESPONSE_HEADERS,
+  SAFE_RESPONSE_HEADERS,
+  createApiToolHandler,
+  extractSafeResponseHeaders,
+  type ApiToolDeps,
+} from "./apiTools.js";
 import { TOOL_DEFINITIONS } from "./tools.js";
 import { isReadOnlyTool } from "./readOnlyMode.js";
 
@@ -85,6 +92,112 @@ describe("zentrixpay_call", () => {
     const { handle, paid } = setup({ insufficientFundsMessage: async () => "Insufficient USDC" });
     expect(await handle("zentrixpay_call", { apiId: "api1" })).toBe("Insufficient USDC");
     expect(paid).not.toHaveBeenCalled();
+  });
+
+  it("returns allowlisted pagination, rate-limit, retry, and caching headers while stripping sensitive headers (#146)", async () => {
+    const upstream = new Response('{"items":[1,2]}', {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "Retry-After": "30",
+        "X-RateLimit-Limit": "100",
+        "X-RateLimit-Remaining": "99",
+        "X-RateLimit-Reset": "1700000000",
+        "RateLimit-Policy": "100;w=60",
+        "X-Total-Count": "42",
+        "X-Page": "2",
+        "X-Per-Page": "20",
+        "X-Next-Page": "3",
+        Link: '<https://api.example.com/items?page=3>; rel="next"',
+        ETag: '"v1-abc"',
+        "Cache-Control": "max-age=60",
+        "X-Request-Id": "req-123",
+        // Excluded: cookies
+        "Set-Cookie": "session=secret; HttpOnly",
+        Cookie: "caller_cookie=1",
+        // Excluded: hop-by-hop headers
+        Connection: "keep-alive, x-custom-hop",
+        "Keep-Alive": "timeout=5",
+        "Transfer-Encoding": "chunked",
+        Upgrade: "websocket",
+        "Proxy-Authenticate": "Basic",
+        "Proxy-Authorization": "Basic secret",
+        // Excluded: payment challenge / settlement / auth headers
+        "Payment-Required": "x402-challenge",
+        "Payment-Response": JSON.stringify({ transaction: "tx-abc" }),
+        "X-Payment-Response": JSON.stringify({ transaction: "tx-abc" }),
+        "X-Payment-Required": "challenge",
+        "WWW-Authenticate": "Bearer realm=internal",
+        Authorization: "Bearer upstream-token",
+        "X-Api-Key": "internal-key",
+        // Excluded: unallowlisted internal headers
+        Server: "internal-nginx",
+        "X-Powered-By": "Express",
+        "X-Internal-Secret": "top-secret",
+      },
+    });
+    const { handle } = setup({}, upstream);
+    const out = JSON.parse(await handle("zentrixpay_call", { apiId: "api1" }));
+
+    expect(out.txHash).toBe("tx-abc");
+    expect(out.headers).toEqual({
+      "cache-control": "max-age=60",
+      "content-type": "application/json",
+      etag: '"v1-abc"',
+      link: '<https://api.example.com/items?page=3>; rel="next"',
+      "ratelimit-policy": "100;w=60",
+      "retry-after": "30",
+      "x-next-page": "3",
+      "x-page": "2",
+      "x-per-page": "20",
+      "x-ratelimit-limit": "100",
+      "x-ratelimit-remaining": "99",
+      "x-ratelimit-reset": "1700000000",
+      "x-request-id": "req-123",
+      "x-total-count": "42",
+    });
+
+    // Ensure excluded headers never leak
+    for (const forbidden of [
+      "set-cookie",
+      "cookie",
+      "connection",
+      "keep-alive",
+      "transfer-encoding",
+      "upgrade",
+      "proxy-authenticate",
+      "proxy-authorization",
+      "payment-required",
+      "payment-response",
+      "x-payment-response",
+      "x-payment-required",
+      "www-authenticate",
+      "authorization",
+      "x-api-key",
+      "server",
+      "x-powered-by",
+      "x-internal-secret",
+    ]) {
+      expect(out.headers[forbidden]).toBeUndefined();
+    }
+  });
+
+  it("excludes headers dynamically listed in the Connection hop-by-hop header (#146)", () => {
+    const raw = new Headers({
+      Connection: "close, x-request-id, retry-after",
+      "X-Request-Id": "hop-scoped-id",
+      "Retry-After": "10",
+      "X-Total-Count": "5",
+    });
+    expect(extractSafeResponseHeaders(raw)).toEqual({
+      "x-total-count": "5",
+    });
+  });
+
+  it("keeps SAFE_RESPONSE_HEADERS and EXCLUDED_RESPONSE_HEADERS disjoint (#146)", () => {
+    for (const h of SAFE_RESPONSE_HEADERS) {
+      expect(EXCLUDED_RESPONSE_HEADERS.has(h)).toBe(false);
+    }
   });
 });
 
