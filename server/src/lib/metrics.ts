@@ -48,3 +48,17 @@ export const cacheMisses = new Counter({
   labelNames: ["cache"] as const,
   registers: [metricsRegistry],
 });
+
+// API call record recovery (#134)
+export const apiCallRecoveryPending = new Gauge({
+  name: "api_call_records_pending_recovery",
+  help: "Number of API call records awaiting database recovery after write failures",
+  registers: [metricsRegistry],
+});
+
+export const apiCallRecoveryTotal = new Counter({
+  name: "api_call_records_recovery_total",
+  help: "Total API call record recovery outcomes",
+  labelNames: ["outcome"] as const,
+  registers: [metricsRegistry],
+});

@@ -2,7 +2,6 @@ import {
   check,
   pgEnum,
   pgTable,
-  serial,
   text,
   timestamp,
   integer,
@@ -43,7 +42,9 @@ export const publishers = pgTable("publishers", {
 export const apis = pgTable(
   "apis",
   {
-    id: serial("id").primaryKey(),
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
     // Owning provider (migration 0009_api_proxy.sql).
     publisherId: text("publisher_id")
       .notNull()
@@ -84,6 +85,9 @@ export const apis = pgTable(
     lastHealthCheckAt: timestamp("last_health_check_at"),
     ownershipToken: text("ownership_token").notNull(),
     ownershipVerifiedAt: timestamp("ownership_verified_at"),
+    onchainStatus: onchainStatusEnum("onchain_status").notNull().default("none"),
+    onchainTxHash: text("onchain_tx_hash"),
+    streamingEnabled: boolean("streaming_enabled").notNull().default(false),
     listed: boolean("listed").notNull().default(false),
     tags: jsonb("tags").$type<string[]>().notNull().default([]),
     // Issue #30: price callers pay for a time-limited access pass (null = passes not offered).
@@ -98,6 +102,7 @@ export const apis = pgTable(
     // Match the indexes created in migration 0009_api_proxy.sql.
     publisherIdx: index("idx_apis_publisher_id").on(table.publisherId),
     listedCreatedAtIdx: index("idx_apis_listed_created_at").on(table.listed, table.createdAt),
+    tagsIdx: index("idx_apis_tags").using("gin", table.tags),
   }),
 );
 
@@ -162,32 +167,39 @@ export const apiCreditLedger = pgTable(
 export const apiCalls = pgTable(
   "api_calls",
   {
-    id: serial("id").primaryKey(),
-    apiId: integer("api_id")
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    apiId: text("api_id")
       .notNull()
       .references(() => apis.id, { onDelete: "cascade" }),
+    payerAddress: text("payer_address").notNull(),
+    amount: text("amount").notNull(), // USDC; only collected when charged
+    charged: boolean("charged").notNull().default(false),
     method: text("method").notNull(),
     path: text("path").notNull(),
-    statusCode: integer("status_code"),
-    charged: boolean("charged").notNull().default(false),
-    amount: text("amount"),
-    asset: text("asset"),
-    payer: text("payer"),
+    responseStatus: integer("response_status").notNull(),
+    durationMs: integer("duration_ms").notNull(),
+    // Settlement transaction, from the x402 PAYMENT-RESPONSE header; null when not charged.
     txHash: text("tx_hash"),
-    settlementTx: text("settlement_tx"),
-    latencyMs: integer("latency_ms"),
-    requestHeaders: jsonb("request_headers"),
-    responseHeaders: jsonb("response_headers"),
-    error: text("error"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    refundStatus: text("refund_status").$type<"pending" | "refunded">(),
+    refundAmount: text("refund_amount"),
+    refundTxHash: text("refund_tx_hash"),
+    refundedAt: timestamp("refunded_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => ({
-    apiIdIdx: index("api_calls_api_id_idx").on(table.apiId),
-    createdAtIdx: index("api_calls_created_at_idx").on(table.createdAt),
-    chargedIdx: index("api_calls_charged_idx").on(table.charged),
-    settlementTxIdx: index("api_calls_settlement_tx_idx").on(table.settlementTx),
+    refundTxIdx: uniqueIndex("idx_api_calls_refund_tx_hash").on(table.refundTxHash),
+    apiCreatedIdx: index("idx_api_calls_api_id_created_at").on(table.apiId, table.createdAt),
+    payerCreatedIdx: index("idx_api_calls_payer_address_created_at").on(
+      table.payerAddress,
+      table.createdAt,
+    ),
   }),
 );
+
+export type ApiRow = typeof apis.$inferSelect;
+export type ApiCallRow = typeof apiCalls.$inferSelect;
 
 // API passes (#30) — time-limited access tokens purchased via x402.
 // A caller with an active pass is not charged per call until the pass expires.

@@ -23,7 +23,7 @@ import { parsePayerFromXPayment } from "./parseXPayment.js";
 // back without charging, `signed` additionally confirms that `from` signed
 // the authorization, so nobody can claim someone else's wallet.
 
-const NETWORK_PASSPHRASE = networkPassphraseForX402(config.NETWORK);
+const NETWORK_PASSPHRASE = networkPassphraseForX402(config.NETWORK ?? "stellar:testnet");
 
 export interface PaymentPayer {
   /** The paying wallet, if the header names one. */

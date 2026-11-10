@@ -48,6 +48,13 @@ import router, { buildUpstreamUrl } from "./apis.js";
 import { isPublicAddress, validateUpstreamUrl } from "../lib/upstreamGuard.js";
 import { sendUpstream } from "../lib/upstreamClient.js";
 import { encryptSecret, decryptSecret } from "../utils/secretBox.js";
+import {
+  configureApiCallRecovery,
+  getApiCallRecoveryStatus,
+  recordApiCallWithRecovery,
+  recoverPendingApiCalls,
+  resetApiCallRecoveryForTests,
+} from "../services/apiCallRecovery.js";
 
 describe("upstream guard", () => {
   it.each([
@@ -212,5 +219,45 @@ describe("proxy route", () => {
   it("maps oversize and slow upstream responses to 502/504", async () => {
     expect((await request(app).get("/api/api1/big")).status).toBe(502);
     expect((await request(app).get("/api/api1/slow")).status).toBe(504);
+  });
+
+  it("queues paid call records when the database write fails and recovers without duplicates (#134)", async () => {
+    resetApiCallRecoveryForTests();
+    const persisted: unknown[] = [];
+    let shouldFail = true;
+
+    configureApiCallRecovery({
+      autoSchedule: false,
+      writer: async (record) => {
+        if (shouldFail) {
+          throw new Error("simulated database write failure");
+        }
+        persisted.push(record);
+      },
+    });
+
+    const recordedCall = state.recorded.at(0);
+    const queued = await recordApiCallWithRecovery({
+      ...recordedCall,
+      id: "call_proxy_recovery_test",
+    });
+
+    expect(queued).toEqual({ status: "queued", id: "call_proxy_recovery_test" });
+    expect(getApiCallRecoveryStatus().pendingCount).toBe(1);
+    expect(persisted).toHaveLength(0);
+
+    shouldFail = false;
+    const recovered = await recoverPendingApiCalls();
+    expect(recovered).toEqual({ recovered: 1, failed: 0, pendingCount: 0 });
+    expect(persisted).toHaveLength(1);
+
+    // Retrying the same call ID is idempotent and does not duplicate records
+    const duplicate = await recordApiCallWithRecovery({
+      ...recordedCall,
+      id: "call_proxy_recovery_test",
+    });
+    expect(duplicate).toEqual({ status: "deduplicated", id: "call_proxy_recovery_test" });
+    expect(persisted).toHaveLength(1);
+    resetApiCallRecoveryForTests();
   });
 });
