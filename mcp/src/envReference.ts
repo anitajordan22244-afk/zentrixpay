@@ -21,7 +21,7 @@
  * changes in code changes the generated reference in the same PR.
  */
 
-import { DEFAULT_MAX_AUTO_PAY_USDC } from "./paymentCeiling.js";
+import { DEFAULT_MAX_AUTO_PAY_USDC, DEFAULT_MAX_AUTO_FEE_STROOPS } from "./paymentCeiling.js";
 import { DEFAULT_PAID_CONFIRMATION_POLICY } from "./paidOperations.js";
 import { DEFAULT_MAINNET_MUTATION_POLICY } from "./mainnetGuardrails.js";
 import { DEFAULT_RETRY_POLICY } from "./retry.js";
@@ -103,6 +103,13 @@ export const ENV_VAR_DOCS: EnvVarDoc[] = [
     source: "mcp/src/index.ts",
   },
   {
+    name: "PLATFORM_WALLET_ADDRESS",
+    description:
+      "Platform (vault operator) Stellar public key reported alongside agent wallets in balance checks; mirrors the server's PAY_TO address.",
+    default: "unset (platform wallet omitted from balance reports)",
+    source: "mcp/src/config.ts",
+  },
+  {
     name: "HORIZON_URL",
     description: "Horizon endpoint for balance and account reads. Falls back to the preset.",
     default: "the network preset's Horizon URL",
@@ -166,6 +173,20 @@ export const ENV_VAR_DOCS: EnvVarDoc[] = [
     default: `${DEFAULT_MAX_AUTO_PAY_USDC} USDC`,
     source: "mcp/src/paymentCeiling.ts",
   },
+  {
+    name: "ZENTRIXPAY_SESSION_SPEND_LIMIT_USDC",
+    description:
+      "Cumulative USDC spend limit across all paid calls in the current MCP server process lifetime. Once reached, further paid calls are refused until restart.",
+    default: "unset (no session-wide cap)",
+    source: "mcp/src/paymentCeiling.ts",
+  },
+  {
+    name: "ZENTRIXPAY_MAX_AUTO_FEE_STROOPS",
+    description:
+      "Maximum Stellar network fee (in stroops) permitted for automatic on-chain registry mutations.",
+    default: `${DEFAULT_MAX_AUTO_FEE_STROOPS} (stroops)`,
+    source: "mcp/src/paymentCeiling.ts",
+  },
 
   // ── Catalog & cache ────────────────────────────────────────────────────────
   {
@@ -200,6 +221,13 @@ export const ENV_VAR_DOCS: EnvVarDoc[] = [
     name: "ZENTRIXPAY_PURCHASES_FILE",
     description: "Path of the purchase-receipt file zentrixpay_buy appends to.",
     default: "~/.zentrixpay/purchases.json",
+    source: "mcp/src/purchaseHistory.ts",
+  },
+  {
+    name: "ZENTRIXPAY_PURCHASES_EPOCH",
+    description:
+      "State-file epoch tag recorded on local purchase receipts so receipts from a previous reset or restored wallet are not merged into the active history.",
+    default: '"" (empty epoch)',
     source: "mcp/src/purchaseHistory.ts",
   },
 
@@ -279,6 +307,14 @@ export const ENV_VAR_DOCS: EnvVarDoc[] = [
     default: "unset (disabled)",
     values: ["1", "true", "yes", "on"],
     source: "mcp/src/metrics.ts",
+  },
+  {
+    name: "MCP_LOG_LEVEL",
+    description:
+      "Minimum severity level written to stderr by the MCP logger; unrecognized values fall back to info.",
+    default: "info",
+    values: ["debug", "info", "warn", "error"],
+    source: "mcp/src/logger.ts",
   },
   {
     name: "ZENTRIXPAY_AUDIT_LOG",

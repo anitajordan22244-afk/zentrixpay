@@ -166,12 +166,12 @@ STELLAR_NETWORK = "testnet"
 
 Anything that can launch a stdio MCP server works with:
 
-| Setting     | Value                                           |
-| ----------- | ----------------------------------------------- |
-| Transport   | stdio                                           |
-| Command     | `node`                                          |
+| Setting     | Value                                            |
+| ----------- | ------------------------------------------------ |
+| Transport   | stdio                                            |
+| Command     | `node`                                           |
 | Arguments   | `/absolute/path/to/zentrixpay/mcp/dist/index.js` |
-| Environment | see below (all optional on testnet)             |
+| Environment | see below (all optional on testnet)              |
 
 ---
 
@@ -180,33 +180,34 @@ Anything that can launch a stdio MCP server works with:
 Every variable is optional: with none set, the server targets Stellar **testnet**
 and the hosted ZentrixPay backend.
 
-| Variable                          | Default                                                | Description                                                                                                      |
-| --------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| `ZENTRIXPAY_URL`                   | `https://mindvault-hyr3.onrender.com`                  | ZentrixPay API base URL                                                                                           |
-| `SPONSORED_ACCOUNT_URL`           | `https://stellar-sponsored-agent-account.onrender.com` | Sponsored wallet creation service                                                                                |
-| `STELLAR_NETWORK`                 | `testnet`                                              | Deployment target: `testnet` or `mainnet` (`pubnet`/`public` also accepted)                                      |
-| `NETWORK`                         | from `STELLAR_NETWORK`                                 | x402 network id (`stellar:testnet` / `stellar:pubnet`)                                                           |
-| `SOROBAN_RPC_URL`                 | preset for the network                                 | Soroban RPC (tx status, contract reads)                                                                          |
-| `HORIZON_URL`                     | preset for the network                                 | Horizon (balance checks)                                                                                         |
-| `USDC_CONTRACT_ID`                | preset for the network                                 | USDC Stellar Asset Contract used by x402                                                                         |
-| `VAULT_REGISTRY_CONTRACT_ID`      | testnet default; **required on mainnet**               | Deployed vault-registry contract                                                                                 |
-| `ZENTRIXPAY_ALLOW_MAINNET`         | unset                                                  | Allows mainnet mutations without per-call confirmation. See [security notes](#security-notes)                    |
-| `ZENTRIXPAY_METRICS`               | unset                                                  | Set `1` to collect opt-in tool metrics ([docs](mcp-metrics.md))                                                  |
-| `ZENTRIXPAY_MOCK`                  | unset                                                  | Set `1` for offline mock mode — no network, no funds, deterministic fixtures                                     |
-| `ZENTRIXPAY_AUDIT_LOG`             | unset                                                  | Set `1` to log mutating tool calls to stderr (arguments and payloads are redacted)                               |
-| `ZENTRIXPAY_AGENT_SECRET`          | unset                                                  | Stellar secret key `zentrixpay_import_wallet` reads when none is passed. See [security notes](#security-notes)    |
-| `ZENTRIXPAY_PURCHASES_FILE`        | `~/.zentrixpay/purchases.json`                          | Where purchase receipts are stored, read by `zentrixpay_purchase_history` and `zentrixpay_export_receipts`         |
-| `ZENTRIXPAY_RESOURCE_HISTORY_FILE` | `~/.zentrixpay/resource-history.jsonl`                  | Append-only audit path used by the resource provenance and change-log tools                                      |
-| `ZENTRIXPAY_MAX_AUTO_PAY_USDC`     | `10`                                                   | Ceiling on an x402 payment `zentrixpay_buy` will make without `maxAutoPayUsdc` ([docs](environment-variables.md)) |
+| Variable                              | Default                                                | Description                                                                                                       |
+| ------------------------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| `ZENTRIXPAY_URL`                      | `https://mindvault-hyr3.onrender.com`                  | ZentrixPay API base URL                                                                                           |
+| `SPONSORED_ACCOUNT_URL`               | `https://stellar-sponsored-agent-account.onrender.com` | Sponsored wallet creation service                                                                                 |
+| `STELLAR_NETWORK`                     | `testnet`                                              | Deployment target: `testnet` or `mainnet` (`pubnet`/`public` also accepted)                                       |
+| `NETWORK`                             | from `STELLAR_NETWORK`                                 | x402 network id (`stellar:testnet` / `stellar:pubnet`)                                                            |
+| `SOROBAN_RPC_URL`                     | preset for the network                                 | Soroban RPC (tx status, contract reads)                                                                           |
+| `HORIZON_URL`                         | preset for the network                                 | Horizon (balance checks)                                                                                          |
+| `USDC_CONTRACT_ID`                    | preset for the network                                 | USDC Stellar Asset Contract used by x402                                                                          |
+| `VAULT_REGISTRY_CONTRACT_ID`          | testnet default; **required on mainnet**               | Deployed vault-registry contract                                                                                  |
+| `PLATFORM_WALLET_ADDRESS`             | unset                                                  | Platform (vault operator) Stellar public key reported alongside agent wallets in balance checks                   |
+| `ZENTRIXPAY_ALLOW_MAINNET`            | unset                                                  | Allows mainnet mutations without per-call confirmation. See [security notes](#security-notes)                     |
+| `ZENTRIXPAY_METRICS`                  | unset                                                  | Set `1` to collect opt-in tool metrics ([docs](mcp-metrics.md))                                                   |
+| `MCP_LOG_LEVEL`                       | `info`                                                 | Minimum stderr log level (`debug`, `info`, `warn`, `error`)                                                       |
+| `ZENTRIXPAY_MOCK`                     | unset                                                  | Set `1` for offline mock mode — no network, no funds, deterministic fixtures                                      |
+| `ZENTRIXPAY_AUDIT_LOG`                | unset                                                  | Set `1` to log mutating tool calls to stderr (arguments and payloads are redacted)                                |
+| `ZENTRIXPAY_AGENT_SECRET`             | unset                                                  | Stellar secret key `zentrixpay_import_wallet` reads when none is passed. See [security notes](#security-notes)    |
+| `ZENTRIXPAY_PURCHASES_FILE`           | `~/.zentrixpay/purchases.json`                         | Where purchase receipts are stored, read by `zentrixpay_purchase_history` and `zentrixpay_export_receipts`        |
+| `ZENTRIXPAY_PURCHASES_EPOCH`          | `""`                                                   | State-file epoch tag isolating purchase receipts across wallet resets or restores                                 |
+| `ZENTRIXPAY_MAX_AUTO_PAY_USDC`        | `10`                                                   | Ceiling on an x402 payment `zentrixpay_buy` will make without `maxAutoPayUsdc` ([docs](environment-variables.md)) |
+| `ZENTRIXPAY_SESSION_SPEND_LIMIT_USDC` | unset                                                  | Cumulative USDC spend cap across all paid calls in the current MCP process lifetime                               |
+| `ZENTRIXPAY_MAX_AUTO_FEE_STROOPS`     | `100000`                                               | Maximum Stellar network fee (in stroops) permitted for automatic on-chain registry mutations                      |
 
 Overriding a network value without changing `STELLAR_NETWORK` is a common
 mistake, so the server cross-checks them at startup and refuses to launch on a
 genuine mismatch (for example a mainnet RPC with `STELLAR_NETWORK=testnet`).
 `zentrixpay_network_profile` reports the resolved configuration and warns about
 any override that diverges from the preset.
-
-Resource history defaults to `~/.zentrixpay/resource-history.jsonl`; set
-`ZENTRIXPAY_RESOURCE_HISTORY_FILE` to use a different append-only audit path.
 
 There is no `.env` file for the MCP server — variables come from the client
 config or the shell that launches it. `mcp/.env.example` documents the same
@@ -219,12 +220,12 @@ variables for reference.
 Wallets and publisher API keys are persisted so a restart does not lose the
 agent's identity:
 
-|             |                                                                                                         |
-| ----------- | ------------------------------------------------------------------------------------------------------- |
-| Path        | `~/.zentrixpay/state.json`                                                                               |
-| Permissions | `0600` (owner read/write only), directory created on first write                                        |
-| Contents    | Named wallet profiles: `{ publicKey, secretKey }` and the publisher API key per profile                 |
-| Written by  | `zentrixpay_setup_wallet`, `zentrixpay_register`, `zentrixpay_use_profile`, `zentrixpay_restore_state`      |
+|             |                                                                                                           |
+| ----------- | --------------------------------------------------------------------------------------------------------- |
+| Path        | `~/.zentrixpay/state.json`                                                                                |
+| Permissions | `0600` (owner read/write only), directory created on first write                                          |
+| Contents    | Named wallet profiles: `{ publicKey, secretKey }` and the publisher API key per profile                   |
+| Written by  | `zentrixpay_setup_wallet`, `zentrixpay_register`, `zentrixpay_use_profile`, `zentrixpay_restore_state`    |
 | Cleared by  | `zentrixpay_reset` (active profile) or `zentrixpay_reset {"all": true}` (every profile, deletes the file) |
 
 The path is fixed — it is the launching user's home directory, so each OS user
@@ -326,14 +327,14 @@ server will read from. Run both after changing a config.
 
 ## Troubleshooting
 
-| Symptom                                             | Cause / fix                                                                                                   |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Client shows the server as failed                   | Path is wrong or `dist/` is not built. Run `pnpm build` in `mcp/`, use an absolute path.                      |
-| `Cannot find module …/dist/index.js`                | Same — the config points at `src/` or a stale path.                                                           |
-| Server exits at startup with a config error list    | A genuine env mismatch. The report names each variable and the expected value.                                |
+| Symptom                                             | Cause / fix                                                                                                    |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Client shows the server as failed                   | Path is wrong or `dist/` is not built. Run `pnpm build` in `mcp/`, use an absolute path.                       |
+| `Cannot find module …/dist/index.js`                | Same — the config points at `src/` or a stale path.                                                            |
+| Server exits at startup with a config error list    | A genuine env mismatch. The report names each variable and the expected value.                                 |
 | Tools appear but every call errors with `No wallet` | Run `zentrixpay_setup_wallet` first; state lives per OS user.                                                  |
 | Mainnet calls rejected with a guardrail message     | Expected — pass `confirmMainnet: true`, or set `ZENTRIXPAY_ALLOW_MAINNET=1`.                                   |
-| Node not found                                      | The client may not inherit your shell `PATH`. Use an absolute node path (`/usr/local/bin/node`).              |
+| Node not found                                      | The client may not inherit your shell `PATH`. Use an absolute node path (`/usr/local/bin/node`).               |
 | Not sure if the install is correct                  | Call `zentrixpay_verify_install` — it checks Node.js version, env vars, and config locally (no network calls). |
 
 ---
