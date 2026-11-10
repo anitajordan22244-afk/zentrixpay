@@ -11,6 +11,9 @@ export const publisherRegisterSchema = z
 export const CATALOG_DEFAULT_LIMIT = 20;
 export const CATALOG_MAX_LIMIT = 100;
 
+export const STATS_DEFAULT_LIMIT = 50;
+export const STATS_MAX_LIMIT = 200;
+
 // ── Pay-per-call APIs ─────────────────────────────────────────────────────────
 
 export const API_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
@@ -210,3 +213,83 @@ export const apiCatalogQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(CATALOG_MAX_LIMIT).default(CATALOG_DEFAULT_LIMIT),
   offset: z.coerce.number().int().min(0).default(0),
 });
+
+const DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+const ISO_DATETIME_RE =
+  /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+function isValidCalendarDate(year: number, month: number, day: number): boolean {
+  if (month < 1 || month > 12 || day < 1 || day > 31) return false;
+  const candidate = new Date(Date.UTC(year, month - 1, day));
+  return (
+    candidate.getUTCFullYear() === year &&
+    candidate.getUTCMonth() === month - 1 &&
+    candidate.getUTCDate() === day
+  );
+}
+
+/**
+ * Parse a `from` or `to` filter value into a UTC Date (#143).
+ * - Date-only strings (`YYYY-MM-DD`) expand to start-of-day (`00:00:00.000Z`) for `from`
+ *   and end-of-day (`23:59:59.999Z`) for `to`.
+ * - Full ISO-8601 timestamps with timezone (`Z` or `±HH:MM`) are parsed directly.
+ * - Returns `null` when malformed or when the calendar date does not exist (e.g. Feb 30).
+ */
+export function parseStatsBoundaryDate(raw: string, bound: "from" | "to"): Date | null {
+  const value = raw.trim();
+  const dateMatch = DATE_ONLY_RE.exec(value);
+  if (dateMatch) {
+    const year = Number(dateMatch[1]);
+    const month = Number(dateMatch[2]);
+    const day = Number(dateMatch[3]);
+    if (!isValidCalendarDate(year, month, day)) return null;
+    return new Date(bound === "from" ? `${value}T00:00:00.000Z` : `${value}T23:59:59.999Z`);
+  }
+
+  const isoMatch = ISO_DATETIME_RE.exec(value);
+  if (isoMatch) {
+    const year = Number(isoMatch[1]);
+    const month = Number(isoMatch[2]);
+    const day = Number(isoMatch[3]);
+    if (!isValidCalendarDate(year, month, day)) return null;
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+
+  return null;
+}
+
+const statsFromSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .refine((val) => parseStatsBoundaryDate(val, "from") !== null, {
+    message: "from must be a valid ISO-8601 date (YYYY-MM-DD) or timestamp",
+  })
+  .transform((val) => parseStatsBoundaryDate(val, "from")!);
+
+const statsToSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .refine((val) => parseStatsBoundaryDate(val, "to") !== null, {
+    message: "to must be a valid ISO-8601 date (YYYY-MM-DD) or timestamp",
+  })
+  .transform((val) => parseStatsBoundaryDate(val, "to")!);
+
+export const apiStatsQuerySchema = z
+  .object({
+    from: statsFromSchema.optional(),
+    to: statsToSchema.optional(),
+    limit: z.coerce.number().int().min(1).max(STATS_MAX_LIMIT).default(STATS_DEFAULT_LIMIT),
+    offset: z.coerce.number().int().min(0).default(0),
+  })
+  .superRefine((data, ctx) => {
+    if (data.from && data.to && data.from.getTime() > data.to.getTime()) {
+      ctx.addIssue({
+        code: "custom",
+        message: "from must be earlier than or equal to to",
+        path: ["from"],
+      });
+    }
+  });

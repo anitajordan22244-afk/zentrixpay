@@ -279,10 +279,37 @@ export const API_TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "zentrixpay_api_stats",
     description:
-      "Usage and earnings for one of your APIs: total and charged calls, USDC revenue, unique payers, average latency and the 50 most recent calls.",
+      "Usage and earnings for one of your APIs: total and charged calls, USDC revenue, unique payers, average latency and paginated recent calls. Supports optional from/to ISO-8601 date filters and limit/offset pagination.",
     inputSchema: {
       type: "object",
-      properties: { apiId: API_ID },
+      properties: {
+        apiId: API_ID,
+        from: {
+          type: "string",
+          description:
+            "Optional start of the date range (inclusive), as YYYY-MM-DD or ISO-8601 timestamp.",
+          examples: ["2026-03-01", "2026-03-01T00:00:00Z"],
+        },
+        to: {
+          type: "string",
+          description:
+            "Optional end of the date range (inclusive), as YYYY-MM-DD or ISO-8601 timestamp.",
+          examples: ["2026-03-31", "2026-03-31T23:59:59Z"],
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 200,
+          default: 50,
+          description: "Maximum number of recent calls to return (1–200, default 50).",
+        },
+        offset: {
+          type: "integer",
+          minimum: 0,
+          default: 0,
+          description: "Number of recent calls to skip for pagination (default 0).",
+        },
+      },
       required: ["apiId"],
     },
     annotations: {
@@ -393,6 +420,40 @@ function settlementTx(header: string | null): string | null {
     // ignore malformed header
   }
   return null;
+}
+
+const STATS_DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+const STATS_ISO_DATETIME_RE =
+  /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+function parseStatsDateArg(raw: string, bound: "from" | "to"): Date {
+  const value = raw.trim();
+  const match = STATS_DATE_ONLY_RE.exec(value) ?? STATS_ISO_DATETIME_RE.exec(value);
+  if (!match) {
+    throw new Error(`${bound} must be a valid ISO-8601 date (YYYY-MM-DD) or timestamp`);
+  }
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const check = new Date(Date.UTC(year, month - 1, day));
+  if (
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > 31 ||
+    check.getUTCFullYear() !== year ||
+    check.getUTCMonth() !== month - 1 ||
+    check.getUTCDate() !== day
+  ) {
+    throw new Error(`${bound} must be a valid ISO-8601 date (YYYY-MM-DD) or timestamp`);
+  }
+  const parsed = STATS_DATE_ONLY_RE.test(value)
+    ? new Date(bound === "from" ? `${value}T00:00:00.000Z` : `${value}T23:59:59.999Z`)
+    : new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`${bound} must be a valid ISO-8601 date (YYYY-MM-DD) or timestamp`);
+  }
+  return parsed;
 }
 
 function json(value: unknown): string {
@@ -663,7 +724,38 @@ export function createApiToolHandler(
   async function apiStats(args: Record<string, unknown>): Promise<string> {
     const apiKey = deps.requireApiKey();
     const id = str(args, "apiId", true)!;
-    const res = await deps.jsonFetch(`${base()}/apis/${encodeURIComponent(id)}/stats`, {
+    const fromRaw = str(args, "from");
+    const toRaw = str(args, "to");
+
+    const fromDate = fromRaw ? parseStatsDateArg(fromRaw, "from") : undefined;
+    const toDate = toRaw ? parseStatsDateArg(toRaw, "to") : undefined;
+    if (fromDate && toDate && fromDate.getTime() > toDate.getTime()) {
+      throw new Error("from must be earlier than or equal to to");
+    }
+
+    const params = new URLSearchParams();
+    if (fromRaw) params.set("from", fromRaw.trim());
+    if (toRaw) params.set("to", toRaw.trim());
+
+    if (args.limit !== undefined && args.limit !== null) {
+      const limit = Number(args.limit);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+        throw new Error("limit must be an integer between 1 and 200");
+      }
+      params.set("limit", String(limit));
+    }
+
+    if (args.offset !== undefined && args.offset !== null) {
+      const offset = Number(args.offset);
+      if (!Number.isInteger(offset) || offset < 0) {
+        throw new Error("offset must be an integer >= 0");
+      }
+      params.set("offset", String(offset));
+    }
+
+    const qs = params.toString();
+    const url = `${base()}/apis/${encodeURIComponent(id)}/stats${qs ? `?${qs}` : ""}`;
+    const res = await deps.jsonFetch(url, {
       headers: { "x-api-key": apiKey },
     });
     if (!res.ok) throw new Error(`Failed to get API stats (HTTP ${res.status})`);

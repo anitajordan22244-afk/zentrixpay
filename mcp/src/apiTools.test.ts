@@ -115,4 +115,47 @@ describe("provider tools", () => {
       handle("zentrixpay_update_api", { apiId: "api1", upstreamHeaderName: "x-key" }),
     ).rejects.toThrow(/together/);
   });
+
+  it("api_stats forwards optional from/to date filters and limit/offset pagination (#143)", async () => {
+    const { handle, deps } = setup();
+    await handle("zentrixpay_api_stats", {
+      apiId: "api1",
+      from: "2026-03-01",
+      to: "2026-03-31",
+      limit: 25,
+      offset: 50,
+    });
+    const [url, init] = (deps.jsonFetch as any).mock.calls[0];
+    expect(url).toBe(
+      "http://gw.test/apis/api1/stats?from=2026-03-01&to=2026-03-31&limit=25&offset=50",
+    );
+    expect(init.headers["x-api-key"]).toBe("key");
+  });
+
+  it("api_stats rejects invalid date ranges and out-of-bounds pagination before fetching (#143)", async () => {
+    const { handle, deps } = setup();
+    await expect(
+      handle("zentrixpay_api_stats", {
+        apiId: "api1",
+        from: "2026-03-31",
+        to: "2026-03-01",
+      }),
+    ).rejects.toThrow(/earlier than or equal to/);
+
+    await expect(
+      handle("zentrixpay_api_stats", {
+        apiId: "api1",
+        from: "2026-02-30",
+      }),
+    ).rejects.toThrow(/valid ISO-8601/);
+
+    await expect(
+      handle("zentrixpay_api_stats", {
+        apiId: "api1",
+        limit: 500,
+      }),
+    ).rejects.toThrow(/limit/);
+
+    expect(deps.jsonFetch).not.toHaveBeenCalled();
+  });
 });

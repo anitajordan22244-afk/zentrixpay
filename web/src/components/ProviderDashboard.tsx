@@ -8,6 +8,7 @@ import {
   updateApi,
   verifyApiOwnership,
   type ApiStats,
+  type ApiStatsQuery,
   type HttpMethod,
   type OwnerApi,
 } from "../api/apis.js";
@@ -83,8 +84,8 @@ function RememberKeyOption({
         Remember this key on this device
       </label>
       <p id={`${id}-hint`} className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-        By default the key is kept only for this browser tab and forgotten when it closes. Only
-        tick this on a device you trust — a remembered key stays until you sign out.
+        By default the key is kept only for this browser tab and forgotten when it closes. Only tick
+        this on a device you trust — a remembered key stays until you sign out.
       </p>
     </div>
   );
@@ -547,7 +548,31 @@ function OwnershipInstructions({
 
 // ── Managing one API ─────────────────────────────────────────────────────────
 
-function StatsPanel({ stats }: { stats: ApiStats }) {
+const STATS_PAGE_LIMIT = 50;
+
+function StatsPanel({
+  apiId,
+  stats,
+  fromDate,
+  toDate,
+  busy,
+  onFromDateChange,
+  onToDateChange,
+  onApplyFilter,
+  onClearFilter,
+  onPageChange,
+}: {
+  apiId: string;
+  stats: ApiStats;
+  fromDate: string;
+  toDate: string;
+  busy: boolean;
+  onFromDateChange: (val: string) => void;
+  onToDateChange: (val: string) => void;
+  onApplyFilter: () => void;
+  onClearFilter: () => void;
+  onPageChange: (nextOffset: number) => void;
+}) {
   const tiles = [
     ["Revenue", `${stats.revenue} USDC`],
     ["Paid calls", String(stats.chargedCalls)],
@@ -555,8 +580,56 @@ function StatsPanel({ stats }: { stats: ApiStats }) {
     ["Unique payers", String(stats.uniquePayers)],
     ["Avg latency", `${stats.avgDurationMs} ms`],
   ];
+  const limit = stats.pagination?.limit ?? STATS_PAGE_LIMIT;
+  const offset = stats.pagination?.offset ?? 0;
+  const total = stats.pagination?.total ?? stats.calls;
+  const hasMore = stats.pagination?.hasMore ?? offset + stats.recentCalls.length < total;
+  const canGoPrev = offset > 0;
+  const hasFilter = Boolean(fromDate || toDate || stats.range?.from || stats.range?.to);
+
   return (
     <div className="mt-4">
+      <div className="mb-3 flex flex-wrap items-end gap-2">
+        <div>
+          <label
+            htmlFor={`stats-from-${apiId}`}
+            className="mb-1 block text-xs text-gray-500 dark:text-gray-400"
+          >
+            From
+          </label>
+          <input
+            id={`stats-from-${apiId}`}
+            type="date"
+            value={fromDate}
+            onChange={(e) => onFromDateChange(e.target.value)}
+            className={`${inputClass} w-40`}
+          />
+        </div>
+        <div>
+          <label
+            htmlFor={`stats-to-${apiId}`}
+            className="mb-1 block text-xs text-gray-500 dark:text-gray-400"
+          >
+            To
+          </label>
+          <input
+            id={`stats-to-${apiId}`}
+            type="date"
+            value={toDate}
+            onChange={(e) => onToDateChange(e.target.value)}
+            className={`${inputClass} w-40`}
+          />
+        </div>
+        <button type="button" className={secondaryButton} disabled={busy} onClick={onApplyFilter}>
+          Apply filter
+        </button>
+        {hasFilter && (
+          <button type="button" className={secondaryButton} disabled={busy} onClick={onClearFilter}>
+            Clear filter
+          </button>
+        )}
+      </div>
+
       <dl className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
         {tiles.map(([label, value]) => (
           <div key={label} className="rounded-lg bg-gray-50 p-2 dark:bg-gray-900">
@@ -565,7 +638,8 @@ function StatsPanel({ stats }: { stats: ApiStats }) {
           </div>
         ))}
       </dl>
-      {stats.recentCalls.length > 0 && (
+
+      {stats.recentCalls.length > 0 ? (
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead className="text-gray-500 dark:text-gray-400">
@@ -596,7 +670,37 @@ function StatsPanel({ stats }: { stats: ApiStats }) {
             </tbody>
           </table>
         </div>
+      ) : (
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          No calls recorded for this range.
+        </p>
       )}
+
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500 dark:text-gray-400">
+        <span>
+          {stats.recentCalls.length > 0
+            ? `Showing ${offset + 1}–${offset + stats.recentCalls.length} of ${total} calls`
+            : `0 of ${total} calls`}
+        </span>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            className={secondaryButton}
+            disabled={busy || !canGoPrev}
+            onClick={() => onPageChange(Math.max(0, offset - limit))}
+          >
+            Previous
+          </button>
+          <button
+            type="button"
+            className={secondaryButton}
+            disabled={busy || !hasMore}
+            onClick={() => onPageChange(stats.pagination?.nextOffset ?? offset + limit)}
+          >
+            Next
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -616,6 +720,8 @@ function ApiCard({
   const [error, setError] = useState<string | null>(null);
   const [price, setPrice] = useState(api.price);
   const [stats, setStats] = useState<ApiStats | null>(null);
+  const [statsFrom, setStatsFrom] = useState("");
+  const [statsTo, setStatsTo] = useState("");
 
   async function run(label: string, action: () => Promise<OwnerApi | void>) {
     setBusy(label);
@@ -628,6 +734,19 @@ function ApiCard({
     } finally {
       setBusy(null);
     }
+  }
+
+  function loadStats(query: ApiStatsQuery = {}) {
+    if (query.from && query.to && query.from > query.to) {
+      setError("From date must be earlier than or equal to To date");
+      return;
+    }
+    const hasQuery = Object.values(query).some((v) => v !== undefined && v !== "");
+    void run("Stats", async () => {
+      setStats(
+        hasQuery ? await fetchApiStats(apiKey, api.id, query) : await fetchApiStats(apiKey, api.id),
+      );
+    });
   }
 
   return (
@@ -725,13 +844,7 @@ function ApiCard({
         <button
           className={secondaryButton}
           disabled={busy !== null}
-          onClick={() =>
-            stats
-              ? setStats(null)
-              : run("Stats", async () => {
-                  setStats(await fetchApiStats(apiKey, api.id));
-                })
-          }
+          onClick={() => (stats ? setStats(null) : loadStats())}
         >
           {stats ? "Hide stats" : busy === "Stats" ? "Loading…" : "Stats"}
         </button>
@@ -742,7 +855,38 @@ function ApiCard({
           {error}
         </p>
       )}
-      {stats && <StatsPanel stats={stats} />}
+      {stats && (
+        <StatsPanel
+          apiId={api.id}
+          stats={stats}
+          fromDate={statsFrom}
+          toDate={statsTo}
+          busy={busy !== null}
+          onFromDateChange={setStatsFrom}
+          onToDateChange={setStatsTo}
+          onApplyFilter={() =>
+            loadStats({
+              from: statsFrom || undefined,
+              to: statsTo || undefined,
+              limit: stats.pagination?.limit ?? STATS_PAGE_LIMIT,
+              offset: 0,
+            })
+          }
+          onClearFilter={() => {
+            setStatsFrom("");
+            setStatsTo("");
+            loadStats();
+          }}
+          onPageChange={(nextOffset) =>
+            loadStats({
+              from: statsFrom || undefined,
+              to: statsTo || undefined,
+              limit: stats.pagination?.limit ?? STATS_PAGE_LIMIT,
+              offset: nextOffset,
+            })
+          }
+        />
+      )}
     </li>
   );
 }

@@ -12,13 +12,16 @@ import {
 // Issue #137: provider API keys are session-only by default, remembering them
 // on the device is an explicit opt-in, and sign-out clears every copy.
 
-const { mockFetchMyApis } = vi.hoisted(() => ({ mockFetchMyApis: vi.fn() }));
+const { mockFetchMyApis, mockFetchApiStats } = vi.hoisted(() => ({
+  mockFetchMyApis: vi.fn(),
+  mockFetchApiStats: vi.fn(),
+}));
 
 vi.mock("../api/apis.js", () => ({
   HTTP_METHODS: ["GET", "POST", "PUT", "PATCH", "DELETE"],
   fetchMyApis: mockFetchMyApis,
   createApi: vi.fn(),
-  fetchApiStats: vi.fn(),
+  fetchApiStats: mockFetchApiStats,
   registerPublisher: vi.fn(),
   updateApi: vi.fn(),
   verifyApiOwnership: vi.fn(),
@@ -63,6 +66,7 @@ beforeEach(() => {
   vi.stubGlobal("localStorage", memoryStorage());
   mockFetchMyApis.mockReset();
   mockFetchMyApis.mockResolvedValue([]);
+  mockFetchApiStats.mockReset();
 });
 
 describe("providerKeyStorage", () => {
@@ -173,5 +177,180 @@ describe("ProviderDashboard key storage", () => {
     expect(sessionStorage.getItem(PROVIDER_KEY_STORAGE)).toBeNull();
     expect(localStorage.getItem(PROVIDER_KEY_STORAGE)).toBeNull();
     expect(screen.getByRole("button", { name: "Open dashboard" })).toBeTruthy();
+  });
+});
+
+describe("ProviderDashboard API stats filters & pagination (#143)", () => {
+  const sampleApi = {
+    id: "api-143",
+    name: "Weather Forecast",
+    description: "Hourly weather",
+    price: "0.01",
+    priceRules: [],
+    currency: "USDC" as const,
+    walletAddress: "G" + "A".repeat(55),
+    allowedMethods: ["GET" as const],
+    tags: ["weather"],
+    healthy: true,
+    proxyUrl: "https://gw.test/api/api-143",
+    openapiUrl: null,
+    onchain: { registered: true, contractId: "C1", txHash: "tx1" },
+    createdAt: "2026-03-01T00:00:00.000Z",
+    upstreamUrl: "https://api.weather.test/v1",
+    upstreamHeaderName: null,
+    hasUpstreamSecret: false,
+    upstreamQueryParamName: null,
+    hasUpstreamQuerySecret: false,
+    timeoutMs: null,
+    maxResponseBytes: null,
+    webhookUrl: null,
+    hasWebhookSecret: false,
+    healthPath: null,
+    health: { healthy: true, consecutiveFailures: 0, lastCheckedAt: null },
+    listed: true,
+    onchainStatus: "registered" as const,
+    ownershipVerified: true,
+    ownershipVerification: {
+      url: "https://api.weather.test/.well-known/zentrixpay.txt",
+      expectedContent: "zentrixpay-verification=tok",
+    },
+  };
+
+  function makeStatsResponse(overrides: Record<string, unknown> = {}) {
+    return {
+      apiId: "api-143",
+      calls: 3,
+      chargedCalls: 2,
+      revenue: "0.02",
+      uniquePayers: 2,
+      avgDurationMs: 110,
+      refundedCalls: 0,
+      refunded: "0",
+      netRevenue: "0.02",
+      currency: "USDC" as const,
+      recentCalls: [
+        {
+          id: "c1",
+          payerAddress: "G" + "B".repeat(55),
+          amount: "0.01",
+          charged: true,
+          method: "GET",
+          path: "/lagos",
+          responseStatus: 200,
+          durationMs: 100,
+          refundStatus: null,
+          refundAmount: null,
+          refundTxHash: null,
+          refundedAt: null,
+          createdAt: "2026-03-10T10:00:00.000Z",
+        },
+        {
+          id: "c2",
+          payerAddress: "G" + "C".repeat(55),
+          amount: "0.01",
+          charged: true,
+          method: "GET",
+          path: "/accra",
+          responseStatus: 200,
+          durationMs: 120,
+          refundStatus: null,
+          refundAmount: null,
+          refundTxHash: null,
+          refundedAt: null,
+          createdAt: "2026-03-09T10:00:00.000Z",
+        },
+      ],
+      range: { from: null, to: null },
+      pagination: {
+        limit: 2,
+        offset: 0,
+        total: 3,
+        hasMore: true,
+        nextOffset: 2,
+      },
+      ...overrides,
+    };
+  }
+
+  it("applies date range filters, validates inverted ranges, and paginates calls", async () => {
+    saveProviderKey("mv_stats", false);
+    mockFetchMyApis.mockResolvedValue([sampleApi]);
+    mockFetchApiStats.mockResolvedValueOnce(makeStatsResponse());
+
+    renderDashboard();
+    await waitFor(() => expect(screen.getByText("Weather Forecast")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "Stats" }));
+    await waitFor(() => expect(mockFetchApiStats).toHaveBeenCalledWith("mv_stats", "api-143"));
+    expect(screen.getByText("Showing 1–2 of 3 calls")).toBeTruthy();
+
+    // Paginate to next page
+    mockFetchApiStats.mockResolvedValueOnce(
+      makeStatsResponse({
+        recentCalls: [
+          {
+            id: "c3",
+            payerAddress: "G" + "D".repeat(55),
+            amount: "0.00",
+            charged: false,
+            method: "GET",
+            path: "/nairobi",
+            responseStatus: 502,
+            durationMs: 110,
+            refundStatus: null,
+            refundAmount: null,
+            refundTxHash: null,
+            refundedAt: null,
+            createdAt: "2026-03-08T10:00:00.000Z",
+          },
+        ],
+        pagination: { limit: 2, offset: 2, total: 3, hasMore: false, nextOffset: null },
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await waitFor(() =>
+      expect(mockFetchApiStats).toHaveBeenLastCalledWith("mv_stats", "api-143", {
+        from: undefined,
+        to: undefined,
+        limit: 2,
+        offset: 2,
+      }),
+    );
+    expect(screen.getByText("Showing 3–3 of 3 calls")).toBeTruthy();
+
+    // Apply a date range filter
+    mockFetchApiStats.mockResolvedValueOnce(
+      makeStatsResponse({
+        calls: 0,
+        chargedCalls: 0,
+        revenue: "0",
+        uniquePayers: 0,
+        avgDurationMs: 0,
+        recentCalls: [],
+        range: { from: "2026-03-01T00:00:00.000Z", to: "2026-03-05T23:59:59.999Z" },
+        pagination: { limit: 2, offset: 0, total: 0, hasMore: false, nextOffset: null },
+      }),
+    );
+
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-03-01" } });
+    fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-03-05" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply filter" }));
+
+    await waitFor(() =>
+      expect(mockFetchApiStats).toHaveBeenLastCalledWith("mv_stats", "api-143", {
+        from: "2026-03-01",
+        to: "2026-03-05",
+        limit: 2,
+        offset: 0,
+      }),
+    );
+    expect(screen.getByText("No calls recorded for this range.")).toBeTruthy();
+
+    // Reject inverted date range client-side
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-03-20" } });
+    fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-03-05" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply filter" }));
+    expect(screen.getByText("From date must be earlier than or equal to To date")).toBeTruthy();
   });
 });
