@@ -1,5 +1,5 @@
 import { Router, type Router as RouterType } from "express";
-import { probeDatabase, probeSorobanRpc } from "../lib/probes.js";
+import { probeDatabase, probeFacilitator, probeSorobanRpc } from "../lib/probes.js";
 import { overallReadinessStatus } from "../lib/readiness.js";
 import { isAccepting } from "../lib/lifecycle.js";
 
@@ -25,9 +25,13 @@ router.get("/health/ready", async (_req, res) => {
     return;
   }
 
-  const [database, sorobanRpc] = await Promise.all([probeDatabase(), probeSorobanRpc()]);
+  const [database, sorobanRpc, facilitator] = await Promise.all([
+    probeDatabase(),
+    probeSorobanRpc(),
+    probeFacilitator(),
+  ]);
 
-  const checks = { database, sorobanRpc };
+  const checks = { database, sorobanRpc, facilitator };
   const status = overallReadinessStatus(checks);
   const httpStatus = status === "ok" ? 200 : 503;
 
