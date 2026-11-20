@@ -1,30 +1,27 @@
 # ZentrixPay CODEOWNERS
 #
-# Maps repository paths to required reviewers so GitHub automatically
-# requests review from the right owner(s) on every pull request.
-# Patterns are matched top-to-bottom; the last matching rule wins.
+# Requests review from the repository owner on every pull request. With branch
+# protection's "Require review from Code Owners" enabled, these paths cannot be
+# merged without that review. The last matching rule wins.
 # https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
 
-# Default owner for anything not covered by a more specific rule below.
-* @archanavdev
+* @anitajordan22244-afk
 
-# Smart-contract workspace — any change here must be reviewed carefully
-# because the contract is deployed on-chain and upgrades are permanent.
-/contract/ @archanavdev
+# Paths that run code on contributors' machines or in CI, or decide what gets
+# installed. Malware spreads through these; see docs/security/malware-defense.md.
+/.github/ @anitajordan22244-afk
+/.husky/ @anitajordan22244-afk
+/.vscode/ @anitajordan22244-afk
+/scripts/ @anitajordan22244-afk
+package.json @anitajordan22244-afk
+pnpm-lock.yaml @anitajordan22244-afk
+pnpm-workspace.yaml @anitajordan22244-afk
+.npmrc @anitajordan22244-afk
+*.config.js @anitajordan22244-afk
+*.config.cjs @anitajordan22244-afk
+*.config.mjs @anitajordan22244-afk
+*.config.ts @anitajordan22244-afk
+Makefile @anitajordan22244-afk
 
-# Server — core API, DB schema, migrations, and business logic.
-/server/ @archanavdev
-
-# Web frontend
-/web/ @archanavdev
-
-# Model Context Protocol server
-/mcp/ @archanavdev
-
-# Shared packages (generated Soroban bindings, registry-client).
-# Binding drift in packages/ breaks server/, web/, and mcp/ simultaneously.
-/packages/ @archanavdev
-
-# GitHub configuration — workflows, branch-protection rules, issue templates.
-# Changes here affect the whole team's process, so require an extra review.
-/.github/ @archanavdev
+# Deployed on-chain; upgrades are permanent.
+/contract/ @anitajordan22244-afk

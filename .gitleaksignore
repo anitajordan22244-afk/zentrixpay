@@ -1,0 +1,45 @@
+# gitleaks baseline: findings reviewed on 2026-11-21 and confirmed not to be real secrets.
+# They are test fixtures (redaction/audit-log/profile tests), documentation placeholders,
+# a public Stellar address and non-secret constants. A historical AGENT_SECRET_KEY value in
+# docs/environment-variables.md fails the Stellar checksum, so it is a made-up placeholder.
+# Add a fingerprint here only after confirming the value is not a real credential.
+0c2c0a9eb9f9253b295a19e5d1906aa4f1fbc0b7:docs/environment-variables.md:generic-api-key:32
+1a282e281f390d4260d8bfba64b70d098740e2e5:mcp/src/auditLog.test.ts:stripe-access-token:177
+2abbd13b45b80e199d15311591b58049cb2260a3:mcp/src/debugBundle.test.ts:generic-api-key:31
+2abbd13b45b80e199d15311591b58049cb2260a3:mcp/src/debugBundle.test.ts:generic-api-key:40
+3beb0afdf2569a7a1f573cbcd322675391e608f8:mcp/src/redaction.test.ts:stripe-access-token:121
+3beb0afdf2569a7a1f573cbcd322675391e608f8:mcp/src/redaction.test.ts:stripe-access-token:17
+3beb0afdf2569a7a1f573cbcd322675391e608f8:mcp/src/redaction.test.ts:stripe-access-token:35
+3beb0afdf2569a7a1f573cbcd322675391e608f8:mcp/src/redaction.test.ts:stripe-access-token:68
+41a8ceb92ce72b5066357c089faa56edfb03fb43:mcp/src/redaction.test.ts:stripe-access-token:126
+41a8ceb92ce72b5066357c089faa56edfb03fb43:mcp/src/redaction.test.ts:stripe-access-token:22
+41a8ceb92ce72b5066357c089faa56edfb03fb43:mcp/src/redaction.test.ts:stripe-access-token:40
+41a8ceb92ce72b5066357c089faa56edfb03fb43:mcp/src/redaction.test.ts:stripe-access-token:73
+599d371860df472d9f23a08159935b3439f12ec6:mcp/src/redaction.test.ts:stripe-access-token:121
+599d371860df472d9f23a08159935b3439f12ec6:mcp/src/redaction.test.ts:stripe-access-token:17
+599d371860df472d9f23a08159935b3439f12ec6:mcp/src/redaction.test.ts:stripe-access-token:35
+599d371860df472d9f23a08159935b3439f12ec6:mcp/src/redaction.test.ts:stripe-access-token:68
+8d0a8a938502082de0a10c401406c2cc543d2800:mcp/src/profiles.test.ts:generic-api-key:171
+8d0a8a938502082de0a10c401406c2cc543d2800:mcp/src/profiles.test.ts:generic-api-key:193
+9faf52415a9f6062f4503d94aeccd932b6c1aafb:mcp/src/auditLog.test.ts:generic-api-key:159
+9faf52415a9f6062f4503d94aeccd932b6c1aafb:mcp/src/auditLog.test.ts:stripe-access-token:71
+a9219c15220eb04a9f513e84c71e27c6d18c79e7:mcp/src/redaction.test.ts:stripe-access-token:121
+a9219c15220eb04a9f513e84c71e27c6d18c79e7:mcp/src/redaction.test.ts:stripe-access-token:17
+a9219c15220eb04a9f513e84c71e27c6d18c79e7:mcp/src/redaction.test.ts:stripe-access-token:35
+a9219c15220eb04a9f513e84c71e27c6d18c79e7:mcp/src/redaction.test.ts:stripe-access-token:68
+aad5c2bcfd78ebdd856f594b7227d6aba87bc64b:docs/supabase-setup.md:generic-api-key:82
+acb72ee5a412afe2ddb9266d0bcf60f666d61905:docs/mcp-pay-per-call.md:generic-api-key:445
+acb72ee5a412afe2ddb9266d0bcf60f666d61905:docs/mcp-pay-per-call.md:generic-api-key:464
+b953f0acccb40ce9807ed136b01a32c657413e8d:mcp/src/correlation.ts:generic-api-key:33
+d4685af892c150033e8e8ff8daa30a98bd29c47f:mcp/src/redaction.test.ts:stripe-access-token:121
+d4685af892c150033e8e8ff8daa30a98bd29c47f:mcp/src/redaction.test.ts:stripe-access-token:17
+d4685af892c150033e8e8ff8daa30a98bd29c47f:mcp/src/redaction.test.ts:stripe-access-token:35
+d4685af892c150033e8e8ff8daa30a98bd29c47f:mcp/src/redaction.test.ts:stripe-access-token:68
+e03598b30f27c4d064df626517bd8d9bcbc6374e:packages/registry-client/src/index.test.ts:generic-api-key:198
+eff8444ba727073980369a641b40242a174b8037:mcp/src/redaction.test.ts:stripe-access-token:121
+eff8444ba727073980369a641b40242a174b8037:mcp/src/redaction.test.ts:stripe-access-token:17
+eff8444ba727073980369a641b40242a174b8037:mcp/src/redaction.test.ts:stripe-access-token:35
+eff8444ba727073980369a641b40242a174b8037:mcp/src/redaction.test.ts:stripe-access-token:68
+f3687e70511cd340c6d64717d738706f9faff790:mcp/src/correlation.ts:generic-api-key:33
+f3687e70511cd340c6d64717d738706f9faff790:mcp/src/debugBundle.test.ts:generic-api-key:40
+fde6d8ba9d79587402af5ff8eb29241083cf7c46:mcp/src/debugBundle.test.ts:generic-api-key:40

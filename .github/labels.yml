@@ -107,3 +107,11 @@
 - name: "question"
   color: "d876e3"
   description: "A question or request for more information, not actionable work"
+
+# Malware scan (.github/workflows/malware-scan.yml)
+- name: "security: flagged"
+  color: "b60205"
+  description: "Malware scan found something that needs a maintainer's attention"
+- name: "security: reviewed"
+  color: "0e8a16"
+  description: "A maintainer reviewed the sensitive changes the malware scan flagged"

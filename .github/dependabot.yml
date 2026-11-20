@@ -3,6 +3,9 @@ updates:
   # Enable version updates for npm (pnpm workspace)
   - package-ecosystem: "npm"
     directory: "/"
+    # Don't propose versions younger than 3 days (malware-defense.md).
+    cooldown:
+      default-days: 3
     schedule:
       interval: "weekly"
       day: "monday"
@@ -19,6 +22,9 @@ updates:
   # Enable version updates for GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"
+    # Don't propose versions younger than 3 days (malware-defense.md).
+    cooldown:
+      default-days: 3
     schedule:
       interval: "weekly"
       day: "monday"

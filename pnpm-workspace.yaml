@@ -6,3 +6,9 @@ packages:
 # Note: contract/ is a Rust/Soroban workspace, managed by cargo (not pnpm).
 # packages/* holds shared TS packages (e.g. registry-client — typed wrappers
 # around the Soroban contract bindings) consumed by server/, web/, and mcp/.
+
+# Supply-chain protection: never install an npm version published less than
+# 3 days ago. Worm-infected releases are usually detected and pulled within
+# hours, so this keeps them out of new installs and upgrades. It does not
+# affect installs from the existing lockfile. See docs/security/malware-defense.md.
+minimumReleaseAge: 4320

@@ -20,6 +20,9 @@ on:
       - "pnpm-lock.yaml"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   check-links:
     runs-on: ubuntu-latest
