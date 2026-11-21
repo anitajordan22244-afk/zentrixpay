@@ -17,6 +17,7 @@ import {
   type ApiCallRecorder,
 } from "./apiCallRecorder.js";
 import { apiCallRecordsPending } from "../lib/metrics.js";
+import { nextHealthCheckAt } from "../lib/healthBackoff.js";
 import { logger as rootLogger } from "../lib/logger.js";
 
 export { statsWhere, type RecentCallsOptions, type StatsRange } from "./apiStatsQuery.js";
@@ -72,8 +73,6 @@ export function toPublicApi(api: ApiRow) {
     },
     createdAt: api.createdAt,
   };
-  createdAt: string;
-  updatedAt: string;
 }
 
 export interface CreateApiInput {
@@ -119,27 +118,33 @@ export function toOwnerApi(api: ApiRow) {
       url: ownershipFileUrl(api.upstreamUrl),
       expectedContent: ownershipLine(api.ownershipToken),
     },
+    // When the health worker next checks this API (#220). Null when there is no health path or it was never checked.
+    nextHealthCheckAt: api.healthPath
+      ? (nextHealthCheckAt(
+          api,
+          config.HEALTH_CHECK_INTERVAL_MS,
+          config.HEALTH_CHECK_FAILURE_THRESHOLD,
+          config.HEALTH_CHECK_MAX_BACKOFF_MS,
+        )?.toISOString() ?? null)
+      : null,
   };
 }
 
 // Fields that are audited when changed. Secrets are masked in the audit log.
 const AUDITED_FIELDS: Array<keyof UpdateApiInput> = [
-  'name',
-  'description',
-  'upstreamUrl',
-  'upstreamMethod',
-  'upstreamHeaderValueEnc',
-  'upstreamQueryValueEnc',
-  'price',
-  'walletAddress',
+  "name",
+  "description",
+  "upstreamUrl",
+  "upstreamMethod",
+  "upstreamHeaderValueEnc",
+  "upstreamQueryValueEnc",
+  "price",
+  "walletAddress",
 ];
 
-const SECRET_FIELDS = new Set<string>([
-  'upstreamHeaderValueEnc',
-  'upstreamQueryValueEnc',
-]);
+const SECRET_FIELDS = new Set<string>(["upstreamHeaderValueEnc", "upstreamQueryValueEnc"]);
 
-const MASKED_VALUE = '***';
+const MASKED_VALUE = "***";
 
 // Injectable DNS resolver so tests can mock DNS lookups.
 export type TxtResolver = (host: string) => Promise<string[][]>;
@@ -204,22 +209,19 @@ async function checkDnsTxt(upstreamUrl: string, token: string): Promise<boolean>
     const records = await txtResolver(host);
     const expectedRecord = `${DNS_TXT_PREFIX}${token}`;
     for (const chunks of records) {
-      const joined = chunks.join('');
+      const joined = chunks.join("");
       if (joined.trim() === expectedRecord) {
         return true;
       }
     }
     return false;
   } catch (err) {
-    logger.warn({ err, upstreamUrl }, 'Failed to check DNS TXT ownership record');
+    logger.warn({ err, upstreamUrl }, "Failed to check DNS TXT ownership record");
     return false;
   }
 }
 
-async function verifyOwnership(
-  upstreamUrl: string,
-  token: string,
-): Promise<boolean> {
+async function verifyOwnership(upstreamUrl: string, token: string): Promise<boolean> {
   const [fileOk, dnsOk] = await Promise.all([
     checkWellKnownFile(upstreamUrl, token),
     checkDnsTxt(upstreamUrl, token),
@@ -233,7 +235,7 @@ function toOwnerApi(api: ApiRecord): OwnerApi {
   try {
     wellKnownUrl = new URL(WELL_KNOWN_PATH, api.upstreamUrl).toString();
   } catch {
-    wellKnownUrl = `${api.upstreamUrl.replace(/\/+$/, '')}${WELL_KNOWN_PATH}`;
+    wellKnownUrl = `${api.upstreamUrl.replace(/\/+$/, "")}${WELL_KNOWN_PATH}`;
   }
   return {
     id: api.id,
@@ -247,7 +249,7 @@ function toOwnerApi(api: ApiRecord): OwnerApi {
     ownershipVerified: api.ownershipVerified,
     ownershipVerification: {
       token: api.ownershipToken,
-      methods: ['well-known-file', 'dns-txt'],
+      methods: ["well-known-file", "dns-txt"],
       wellKnownFile: {
         url: wellKnownUrl,
         expectedLine: `${DNS_TXT_PREFIX}${api.ownershipToken}`,
@@ -265,14 +267,14 @@ function toOwnerApi(api: ApiRecord): OwnerApi {
 export async function createApi(input: CreateApiInput): Promise<OwnerApi> {
   const now = new Date().toISOString();
   const id = randomUUID();
-  const ownershipToken = randomUUID().replace(/-/g, '');
+  const ownershipToken = randomUUID().replace(/-/g, "");
   const record: ApiRecord = {
     id,
     publisherId: input.publisherId,
     name: input.name,
     description: input.description ?? null,
     upstreamUrl: input.upstreamUrl,
-    upstreamMethod: input.upstreamMethod ?? 'GET',
+    upstreamMethod: input.upstreamMethod ?? "GET",
     upstreamHeaderValueEnc: input.upstreamHeaderValueEnc ?? null,
     upstreamQueryValueEnc: input.upstreamQueryValueEnc ?? null,
     price: input.price,
@@ -284,83 +286,76 @@ export async function createApi(input: CreateApiInput): Promise<OwnerApi> {
     updatedAt: now,
   };
 
-export interface CreateApiInput {
-  publisherId: string;
-  name: string;
-  description?: string;
-  upstreamUrl: string;
-  price: string;
-  priceRules?: ApiPriceRule[];
-  walletAddress: string;
-  allowedMethods: string[];
-  upstreamHeader?: { name: string; value: string };
-  upstreamQueryParam?: { name: string; value: string };
-  openapiSpec?: string | Record<string, unknown>;
-  timeoutMs?: number;
-  maxResponseBytes?: number;
-  webhook?: { url: string; secret: string };
-  healthPath?: string;
-  tags: string[];
-  payerAllowlist?: string[];
-  payerDenylist?: string[];
-  /** Issue #30: price of a time-limited access pass (undefined = passes not offered). */
-  passPrice?: string;
-  /** Issue #32: free calls per wallet per day before the paywall applies (0 = disabled). */
-  freeCallsPerDay?: number;
-}
+  export interface CreateApiInput {
+    publisherId: string;
+    name: string;
+    description?: string;
+    upstreamUrl: string;
+    price: string;
+    priceRules?: ApiPriceRule[];
+    walletAddress: string;
+    allowedMethods: string[];
+    upstreamHeader?: { name: string; value: string };
+    upstreamQueryParam?: { name: string; value: string };
+    openapiSpec?: string | Record<string, unknown>;
+    timeoutMs?: number;
+    maxResponseBytes?: number;
+    webhook?: { url: string; secret: string };
+    healthPath?: string;
+    tags: string[];
+    payerAllowlist?: string[];
+    payerDenylist?: string[];
+    /** Issue #30: price of a time-limited access pass (undefined = passes not offered). */
+    passPrice?: string;
+    /** Issue #32: free calls per wallet per day before the paywall applies (0 = disabled). */
+    freeCallsPerDay?: number;
+  }
 
-export async function createApi(input: CreateApiInput): Promise<ApiRow> {
-  const [row] = await db
-    .insert(apis)
-    .values({
-      publisherId: input.publisherId,
-      name: input.name,
-      description: input.description,
-      upstreamUrl: checkedUpstreamUrl(input.upstreamUrl),
-      price: input.price,
-      priceRules: input.priceRules ?? [],
-      walletAddress: input.walletAddress,
-      allowedMethods: input.allowedMethods,
-      timeoutMs: clampTimeout(input.timeoutMs),
-      maxResponseBytes: checkedMaxResponseBytes(input.maxResponseBytes),
-      healthPath: input.healthPath,
-      tags: input.tags,
-      payerAllowlist: input.payerAllowlist ?? null,
-      payerDenylist: input.payerDenylist ?? [],
-      passPrice: input.passPrice ?? null,
-      freeCallsPerDay: input.freeCallsPerDay ?? 0,
-      ownershipToken: randomBytes(16).toString("hex"),
-      openapiSpec: checkedOpenApiSpec(input.openapiSpec),
-      streamingEnabled: input.streamingEnabled ?? false,
-      ...encryptedHeader(input.upstreamHeader),
-      ...encryptedQueryParam(input.upstreamQueryParam),
-    })
-    .returning();
-  return row;
-}
+  export async function createApi(input: CreateApiInput): Promise<ApiRow> {
+    const [row] = await db
+      .insert(apis)
+      .values({
+        publisherId: input.publisherId,
+        name: input.name,
+        description: input.description,
+        upstreamUrl: checkedUpstreamUrl(input.upstreamUrl),
+        price: input.price,
+        priceRules: input.priceRules ?? [],
+        walletAddress: input.walletAddress,
+        allowedMethods: input.allowedMethods,
+        timeoutMs: clampTimeout(input.timeoutMs),
+        maxResponseBytes: checkedMaxResponseBytes(input.maxResponseBytes),
+        healthPath: input.healthPath,
+        tags: input.tags,
+        payerAllowlist: input.payerAllowlist ?? null,
+        payerDenylist: input.payerDenylist ?? [],
+        passPrice: input.passPrice ?? null,
+        freeCallsPerDay: input.freeCallsPerDay ?? 0,
+        ownershipToken: randomBytes(16).toString("hex"),
+        openapiSpec: checkedOpenApiSpec(input.openapiSpec),
+        streamingEnabled: input.streamingEnabled ?? false,
+        ...encryptedHeader(input.upstreamHeader),
+        ...encryptedQueryParam(input.upstreamQueryParam),
+      })
+      .returning();
+    return row;
+  }
 
   return toOwnerApi(record);
 }
 
 export async function getApiById(id: string): Promise<ApiRecord | null> {
-  const row = await db<ApiRecord>('apis').where({ id }).first();
+  const row = await db<ApiRecord>("apis").where({ id }).first();
   return row ?? null;
 }
 
-export async function getOwnerApi(
-  id: string,
-  publisherId: string,
-): Promise<OwnerApi | null> {
-  const row = await db<ApiRecord>('apis')
-    .where({ id, publisherId })
-    .first();
+export async function getOwnerApi(id: string, publisherId: string): Promise<OwnerApi | null> {
+  const row = await db<ApiRecord>("apis").where({ id, publisherId }).first();
   return row ? toOwnerApi(row) : null;
 }
 
 export async function listOwnerApis(publisherId: string): Promise<OwnerApi[]> {
-  const rows = await db<ApiRecord>('apis')
-    .where({ publisherId })
-    .orderBy('createdAt', 'desc');
+  const rows = await db<ApiRecord>("apis").where({ publisherId }).orderBy("createdAt", "desc");
   return rows.map(toOwnerApi);
 }
 
@@ -440,8 +435,7 @@ export async function updateApi(api: ApiRow, input: UpdateApiInput): Promise<Api
   }
 
   const updates: Partial<ApiRecord> = {};
-  const changes: Array<{ field: string; oldValue: unknown; newValue: unknown }> =
-    [];
+  const changes: Array<{ field: string; oldValue: unknown; newValue: unknown }> = [];
 
   for (const field of AUDITED_FIELDS) {
     if (!(field in input)) {
@@ -463,7 +457,7 @@ export async function updateApi(api: ApiRow, input: UpdateApiInput): Promise<Api
   updates.updatedAt = now;
 
   // If the upstream URL changed, ownership must be re-verified.
-  const upstreamChanged = changes.some((c) => c.field === 'upstreamUrl');
+  const upstreamChanged = changes.some((c) => c.field === "upstreamUrl");
   if (upstreamChanged) {
     const verified = await verifyOwnership(
       (updates.upstreamUrl as string) ?? existing.upstreamUrl,
@@ -473,28 +467,20 @@ export async function updateApi(api: ApiRow, input: UpdateApiInput): Promise<Api
     updates.listed = verified;
   }
 
-  await db('apis').where({ id }).update(updates);
+  await db("apis").where({ id }).update(updates);
 
   for (const change of changes) {
-    await recordChange(
-      id,
-      change.field,
-      change.oldValue,
-      change.newValue,
-      publisherId,
-    );
+    await recordChange(id, change.field, change.oldValue, change.newValue, publisherId);
   }
 
-  const updated = await db<ApiRecord>('apis').where({ id }).first();
+  const updated = await db<ApiRecord>("apis").where({ id }).first();
   return updated ? toOwnerApi(updated) : null;
 }
 
-export async function listApiChanges(
-  apiId: string,
-): Promise<ApiChangeRecord[]> {
-  const rows = await db<ApiChangeRecord>('api_changes')
+export async function listApiChanges(apiId: string): Promise<ApiChangeRecord[]> {
+  const rows = await db<ApiChangeRecord>("api_changes")
     .where({ apiId })
-    .orderBy('createdAt', 'desc');
+    .orderBy("createdAt", "desc");
   return rows;
 }
 
@@ -502,9 +488,7 @@ export async function getApiChangesForOwner(
   apiId: string,
   publisherId: string,
 ): Promise<ApiChangeRecord[] | null> {
-  const existing = await db<ApiRecord>('apis')
-    .where({ id: apiId, publisherId })
-    .first();
+  const existing = await db<ApiRecord>("apis").where({ id: apiId, publisherId }).first();
   if (!existing) {
     return null;
   }

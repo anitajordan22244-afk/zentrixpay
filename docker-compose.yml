@@ -74,3 +74,14 @@ services:
 volumes:
   postgres-data:
     driver: local
+
+  # Local trace viewer (#218). Start with: docker compose --profile tracing up -d jaeger
+  # Then set OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318/v1/traces for the server.
+  jaeger:
+    image: jaegertracing/all-in-one:1.57.0
+    profiles: ["tracing"]
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"
+      - "4318:4318"
