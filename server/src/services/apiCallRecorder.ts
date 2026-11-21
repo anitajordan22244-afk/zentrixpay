@@ -2,6 +2,7 @@ import { mkdir, readdir, readFile, rename, unlink, writeFile } from "node:fs/pro
 import { join } from "node:path";
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import type { WebhookOutboxEntry } from "./webhookService.js";
 
 // Durable recording of API-call rows (#134).
 //
@@ -27,6 +28,11 @@ export interface ApiCallRecord {
   durationMs: number;
   /** ISO-8601 time the call finished; kept so recovered rows keep their real time. */
   createdAt: string;
+  /**
+   * Webhook event for a charged call. Written to the webhook outbox in the same
+   * transaction as the call row (#208), so both exist or neither does.
+   */
+  webhook?: WebhookOutboxEntry;
 }
 
 /** Writes one record. Must be idempotent on `callId`. */
@@ -216,20 +222,37 @@ export class FileApiCallRecordOutbox implements ApiCallRecordOutbox {
   }
 }
 
-/** Idempotent insert into api_calls: a retried call id is a no-op. */
+/**
+ * Idempotent insert into api_calls, plus the webhook outbox row when the call
+ * carries a webhook event. One transaction: a retried call id or event id is a
+ * no-op, and a webhook event is never recorded without its call row.
+ */
 export function postgresApiCallRecordStore(
   db: PostgresJsDatabase<Record<string, unknown>>,
 ): ApiCallRecordStore {
   return {
     async insert(r) {
-      await db.execute(sql`
-        insert into api_calls
-          (id, api_id, payer_address, amount, charged, method, path, response_status, duration_ms, created_at)
-        values
-          (${r.callId}, ${r.apiId}, ${r.payerAddress}, ${r.amount}, ${r.charged}, ${r.method},
-           ${r.path}, ${r.responseStatus}, ${r.durationMs}, ${new Date(r.createdAt)})
-        on conflict (id) do nothing
-      `);
+      await db.transaction(async (tx) => {
+        await tx.execute(sql`
+          insert into api_calls
+            (id, api_id, payer_address, amount, charged, method, path, response_status, duration_ms, created_at)
+          values
+            (${r.callId}, ${r.apiId}, ${r.payerAddress}, ${r.amount}, ${r.charged}, ${r.method},
+             ${r.path}, ${r.responseStatus}, ${r.durationMs}, ${r.createdAt}::timestamptz)
+          on conflict (id) do nothing
+        `);
+        if (r.webhook) {
+          const w = r.webhook;
+          await tx.execute(sql`
+            insert into webhook_deliveries
+              (event_id, api_id, url, secret_enc, body, status, attempts, next_attempt_at, created_at)
+            values
+              (${w.eventId}, ${w.apiId}, ${w.url}, ${w.secretEnc}, ${w.body}, 'pending', 0,
+               ${r.createdAt}::timestamptz, ${r.createdAt}::timestamptz)
+            on conflict (event_id) do nothing
+          `);
+        }
+      });
     },
   };
 }

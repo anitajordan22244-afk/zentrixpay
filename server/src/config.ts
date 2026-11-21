@@ -133,11 +133,17 @@ const envSchema = z.object({
   HEALTH_CHECK_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
   HEALTH_CHECK_FAILURE_THRESHOLD: z.coerce.number().int().min(1).default(3),
 
+  // Background workers (health checks, retention, recovery, webhook delivery)
+  // start only when this is true. Set false on API-only instances (#207).
+  RUN_BACKGROUND_WORKERS: envBoolean(true),
+
   // Provider webhooks for charged calls (#36). Delays between attempts grow
   // as WEBHOOK_RETRY_BASE_MS * 4^n.
   WEBHOOK_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
   WEBHOOK_MAX_ATTEMPTS: z.coerce.number().int().min(1).default(5),
   WEBHOOK_RETRY_BASE_MS: z.coerce.number().int().positive().default(1_000),
+  // How often the delivery worker polls the webhook outbox (#208).
+  WEBHOOK_DELIVERY_INTERVAL_MS: z.coerce.number().int().min(0).default(5_000),
 
   // Retention of api_calls rows (#144, docs/api-call-retention.md). Rows older
   // than API_CALL_RETENTION_DAYS are deleted every API_CALL_RETENTION_INTERVAL_MS,

@@ -189,6 +189,33 @@ export const apiCalls = pgTable(
   }),
 );
 
+// Webhook outbox (#208). A charged-call event is written here in the same
+// transaction as its api_calls row, and a worker delivers it with backoff. The
+// signing secret stays encrypted (secret_enc), as on apis.
+export const webhookDeliveries = pgTable(
+  "webhook_deliveries",
+  {
+    id: serial("id").primaryKey(),
+    eventId: text("event_id").notNull(),
+    apiId: integer("api_id")
+      .notNull()
+      .references(() => apis.id, { onDelete: "cascade" }),
+    url: text("url").notNull(),
+    secretEnc: text("secret_enc").notNull(),
+    body: text("body").notNull(),
+    status: text("status").notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
+    lastError: text("last_error"),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    eventIdIdx: uniqueIndex("webhook_deliveries_event_id_idx").on(table.eventId),
+    dueIdx: index("webhook_deliveries_due_idx").on(table.status, table.nextAttemptAt),
+  }),
+);
+
 // API passes (#30) — time-limited access tokens purchased via x402.
 // A caller with an active pass is not charged per call until the pass expires.
 export const apiPasses = pgTable(

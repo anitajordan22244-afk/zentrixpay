@@ -26,19 +26,28 @@ The signature is a base64 Stellar Ed25519 signature over this exact UTF-8
 message, with newline separators and no trailing newline:
 
 ```text
-zentrixpay:api-credit-spend
+zentrixpay:api-credit-spend:v2
 <wallet-address>
 <api-id>
 <uppercase-method>
-<original request path and query>
+<request path without query>
+<canonical query string>
 <unix timestamp in seconds>
 <unique nonce>
 <lowercase hex SHA-256 of the raw request body>
 ```
 
+The canonical query string is the query's parameters sorted by name then value
+and re-encoded with `URLSearchParams` (no leading `?`); it is empty when the
+request has no query. Changing any query parameter invalidates the signature.
+
+Wallets may sign either the raw message bytes or, per SEP-53 (as Freighter's
+`signMessage` does), the SHA-256 of `"Stellar Signed Message:\n"` followed by
+the message bytes. Both are accepted.
+
 For an empty body, hash the empty byte string. The request path is the
-origin-form path and query exactly as sent (for example,
-`/api/weather/v1/forecast?units=metric`). Nonces must be 16–128 characters
+origin-form path as sent (for example, `/api/weather/v1/forecast` with the
+query `units=metric`). Nonces must be 16–128 characters
 from `A-Z`, `a-z`, `0-9`, `.`, `_`, `~`, and `-`; timestamps must be within
 the configured signature clock-skew window. A caller can sign the message
 with its Stellar account key; the API never asks for or stores that key.

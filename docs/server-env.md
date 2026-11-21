@@ -41,24 +41,26 @@ and fill in each value.
 These control the pay-per-call proxy (`/api/:id/*`), upstream health checks and
 provider webhooks.
 
-| Variable                           | Required | Default    | Description                                                                                                                                                   |
-| ---------------------------------- | -------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `UPSTREAM_SECRET_KEY`              | no       | —          | 64 hex chars (32 bytes). Encrypts providers' upstream headers, query secrets and webhook secrets at rest. Without it, APIs cannot be registered with a secret |
-| `PROXY_MAX_REQUEST_BODY`           | no       | `5mb`      | Largest request body forwarded to an upstream                                                                                                                 |
-| `PROXY_MAX_RESPONSE_BYTES`         | no       | `10485760` | Largest upstream response accepted (held in memory until payment settles)                                                                                     |
-| `PROXY_DEFAULT_TIMEOUT_MS`         | no       | `15000`    | Upstream timeout when an API does not set its own                                                                                                             |
-| `PROXY_MAX_TIMEOUT_MS`             | no       | `25000`    | Ceiling for a per-API timeout                                                                                                                                 |
-| `PROXY_IDEMPOTENCY_TTL_MS`         | no       | `3600000`  | How long a paid-call idempotency record is kept in Postgres                                                                                                   |
-| `PROXY_IDEMPOTENCY_MAX_ENTRIES`    | no       | `1000`     | Entry cap for the in-memory idempotency store used by tests                                                                                                   |
-| `PROXY_IDEMPOTENCY_MAX_BODY_BYTES` | no       | `262144`   | Largest response body kept for replay                                                                                                                         |
-| `PROXY_ALLOW_PRIVATE_UPSTREAMS`    | no       | `false`    | Allow upstreams on private/loopback addresses (local development only)                                                                                        |
-| `PROXY_API_CACHE_TTL_MS`           | no       | `5000`     | How long a proxied API's row is cached between DB lookups                                                                                                     |
-| `HEALTH_CHECK_INTERVAL_MS`         | no       | `60000`    | How often APIs with a `healthPath` are pinged (`0` disables)                                                                                                  |
-| `HEALTH_CHECK_TIMEOUT_MS`          | no       | `5000`     | Timeout for each health check                                                                                                                                 |
-| `HEALTH_CHECK_FAILURE_THRESHOLD`   | no       | `3`        | Consecutive failures before an API is hidden from the catalog                                                                                                 |
-| `WEBHOOK_TIMEOUT_MS`               | no       | `5000`     | Timeout for each provider webhook delivery                                                                                                                    |
-| `WEBHOOK_MAX_ATTEMPTS`             | no       | `5`        | Delivery attempts per charged-call event                                                                                                                      |
-| `WEBHOOK_RETRY_BASE_MS`            | no       | `1000`     | Retry delay base; attempt _n_ waits `WEBHOOK_RETRY_BASE_MS * 4^n`                                                                                             |
+| Variable                           | Required | Default    | Description                                                                                                                                                        |
+| ---------------------------------- | -------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `UPSTREAM_SECRET_KEY`              | no       | —          | 64 hex chars (32 bytes). Encrypts providers' upstream headers, query secrets and webhook secrets at rest. Without it, APIs cannot be registered with a secret      |
+| `PROXY_MAX_REQUEST_BODY`           | no       | `5mb`      | Largest request body forwarded to an upstream                                                                                                                      |
+| `PROXY_MAX_RESPONSE_BYTES`         | no       | `10485760` | Largest upstream response accepted (held in memory until payment settles)                                                                                          |
+| `PROXY_DEFAULT_TIMEOUT_MS`         | no       | `15000`    | Upstream timeout when an API does not set its own                                                                                                                  |
+| `PROXY_MAX_TIMEOUT_MS`             | no       | `25000`    | Ceiling for a per-API timeout                                                                                                                                      |
+| `PROXY_IDEMPOTENCY_TTL_MS`         | no       | `3600000`  | How long a paid-call idempotency record is kept in Postgres                                                                                                        |
+| `PROXY_IDEMPOTENCY_MAX_ENTRIES`    | no       | `1000`     | Entry cap for the in-memory idempotency store used by tests                                                                                                        |
+| `PROXY_IDEMPOTENCY_MAX_BODY_BYTES` | no       | `262144`   | Largest response body kept for replay                                                                                                                              |
+| `PROXY_ALLOW_PRIVATE_UPSTREAMS`    | no       | `false`    | Allow upstreams on private/loopback addresses (local development only)                                                                                             |
+| `PROXY_API_CACHE_TTL_MS`           | no       | `5000`     | How long a proxied API's row is cached between DB lookups                                                                                                          |
+| `HEALTH_CHECK_INTERVAL_MS`         | no       | `60000`    | How often APIs with a `healthPath` are pinged (`0` disables)                                                                                                       |
+| `HEALTH_CHECK_TIMEOUT_MS`          | no       | `5000`     | Timeout for each health check                                                                                                                                      |
+| `HEALTH_CHECK_FAILURE_THRESHOLD`   | no       | `3`        | Consecutive failures before an API is hidden from the catalog                                                                                                      |
+| `WEBHOOK_TIMEOUT_MS`               | no       | `5000`     | Timeout for each provider webhook delivery                                                                                                                         |
+| `WEBHOOK_MAX_ATTEMPTS`             | no       | `5`        | Delivery attempts per charged-call event                                                                                                                           |
+| `WEBHOOK_RETRY_BASE_MS`            | no       | `1000`     | Retry delay base; attempt _n_ waits `WEBHOOK_RETRY_BASE_MS * 4^n`                                                                                                  |
+| `WEBHOOK_DELIVERY_INTERVAL_MS`     | no       | `5000`     | How often the webhook delivery worker polls the durable outbox. Events are stored in Postgres, so they survive restarts (#208)                                     |
+| `RUN_BACKGROUND_WORKERS`           | no       | `true`     | Set `false` on API-only instances to skip health-check, retention, recovery and webhook workers. Workers that do run take a Postgres advisory lock per tick (#207) |
 
 ## Legacy vault variables
 
