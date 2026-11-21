@@ -3,6 +3,7 @@ import postgres from "postgres";
 import { config } from "../config.js";
 import { rootLogger } from "../lib/logger.js";
 import { dbPoolTotal, dbPoolIdle } from "../lib/metrics.js";
+import { resolvePoolOptions } from "./poolOptions.js";
 import * as schema from "./schema.js";
 
 const POOL_WARN_THRESHOLD = 5;
@@ -12,7 +13,10 @@ const seenConnections = new Set<number>();
 
 // Track new connections via the debug callback (fires on every query with the connection id).
 // Track closures via onclose. This gives us a live total without private internals.
+const poolOptions = resolvePoolOptions(config);
 const client = postgres(config.DATABASE_URL, {
+  max: poolOptions.max,
+  connection: poolOptions.connection,
   debug(connId) {
     if (!seenConnections.has(connId)) {
       seenConnections.add(connId);

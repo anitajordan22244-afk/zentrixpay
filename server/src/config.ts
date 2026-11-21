@@ -29,6 +29,10 @@ const envSchema = z.object({
 
   // Postgres
   DATABASE_URL: z.string().min(1, "DATABASE_URL (Postgres connection string) is required"),
+  // Pool sizing and query guards (see docs/environment-variables.md).
+  DB_POOL_MAX: z.coerce.number().int().min(1).max(200).default(10),
+  DB_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(100).max(600_000).default(30_000),
+  DB_SLOW_QUERY_MS: z.coerce.number().int().min(0).max(600_000).default(500),
 
   // Limits
   // Explicit JSON body limit for express.json() (e.g. "1mb", "512kb").

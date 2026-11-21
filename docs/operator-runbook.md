@@ -239,6 +239,8 @@ With it, an attacker can change the provider's APIs, including
 
 ## Lost `UPSTREAM_SECRET_KEY`
 
+See also [backup and restore](backup-and-restore.md) for what a lost key affects and how to restore the database with its matching key ring.
+
 This key encrypts every provider's upstream secret
 ([ADR 0004](adr/0004-encrypted-upstream-secrets.md)). Without it, the stored
 values cannot be decrypted, and there is no recovery.
