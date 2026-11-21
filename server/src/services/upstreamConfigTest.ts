@@ -71,10 +71,27 @@ export function upstreamTestUrl(api: Pick<ApiRow, "upstreamUrl" | "healthPath">)
   return target;
 }
 
-/** Remove any secret value from text that may be shown to the provider. */
+/**
+ * Every form a secret can take inside text: the raw value, plus its
+ * URL-encoded and form-encoded forms (what a URL or a query string echoes
+ * back when the value contains reserved characters such as "+", "/" or "=").
+ */
+function secretForms(secret: string): string[] {
+  const forms = new Set<string>([secret, encodeURIComponent(secret)]);
+  forms.add(new URLSearchParams([["v", secret]]).toString().slice(2));
+  forms.add(encodeURIComponent(encodeURIComponent(secret)));
+  return [...forms].filter(Boolean);
+}
+
+/** Remove any secret value (in any encoded form) from text that may be shown to the provider. */
 function scrub(text: string, secrets: string[]): string {
   let out = text;
-  for (const secret of secrets) if (secret) out = out.split(secret).join("***");
+  for (const secret of secrets) {
+    // Longest forms first so a shorter form cannot break up a longer match.
+    for (const form of secretForms(secret).sort((a, b) => b.length - a.length)) {
+      out = out.split(form).join("***");
+    }
+  }
   return out;
 }
 

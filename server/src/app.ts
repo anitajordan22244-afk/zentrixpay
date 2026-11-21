@@ -13,6 +13,7 @@ import healthRouter from "./routes/health.js";
 import publisherRouter from "./routes/publishers.js";
 import apisRouter from "./routes/apis.js";
 import upstreamTestRouter from "./routes/upstreamTest.js";
+import webhooksRouter from "./routes/webhooks.js";
 import discoveryRouter from "./routes/discovery.js";
 import docsRouter from "./routes/docs.js";
 import metricsRouter from "./routes/metrics.js";
@@ -36,6 +37,7 @@ export function createApp(): Express {
   app.use(healthRouter);
   app.use(publisherRouter);
   app.use(upstreamTestRouter);
+  app.use(webhooksRouter);
   app.use(apisRouter);
   app.use(discoveryRouter);
   app.use(metricsRouter);

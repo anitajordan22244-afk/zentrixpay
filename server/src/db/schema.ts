@@ -76,6 +76,10 @@ export const apis = pgTable(
     // AES-256-GCM encrypted like the upstream header value.
     webhookUrl: text("webhook_url"),
     webhookSecretEnc: text("webhook_secret_enc"),
+    // Issue #211: during a rotation the previous secret keeps signing until
+    // webhookPreviousSecretExpiresAt, so receivers can switch without downtime.
+    webhookPreviousSecretEnc: text("webhook_previous_secret_enc"),
+    webhookPreviousSecretExpiresAt: timestamp("webhook_previous_secret_expires_at"),
     // Upstream health (#35): healthPath is pinged relative to upstreamUrl;
     // unhealthy APIs are hidden from the catalog until a check succeeds.
     healthPath: text("health_path"),

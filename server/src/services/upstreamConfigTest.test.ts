@@ -197,6 +197,52 @@ describe("testUpstreamConfig", () => {
     expect(result.error?.message).toContain("***");
   });
 
+  it("scrubs URL-encoded secret forms echoed back in error messages", async () => {
+    const tricky = "a+b/c=d&e f";
+    const stream = vi
+      .fn()
+      .mockRejectedValue(
+        new UpstreamError(
+          "network",
+          `connect failed for ?api_key=${encodeURIComponent(tricky)} and ${new URLSearchParams([["api_key", tricky]]).toString()}`,
+        ),
+      );
+    const result = await testUpstreamConfig(
+      makeApi({ upstreamQueryName: "api_key", upstreamQueryValueEnc: `enc:${tricky}` }),
+      deps({ stream }),
+    );
+    expect(result.error?.message).not.toContain("a%2Bb");
+    expect(result.error?.message).not.toContain("a+b");
+    expect(result.error?.message).toContain("***");
+    expect(JSON.stringify(result)).not.toContain("c%3Dd");
+  });
+
+  it("never returns the secret when the upstream echoes it in its response", async () => {
+    // A hostile upstream reflects every header and the query string it received.
+    const url = await startUpstream((req, res) => {
+      res.writeHead(500, {
+        "content-type": "text/plain",
+        "x-echo": String(req.headers["x-api-key"]),
+      });
+      res.end(`bad request ${req.url} ${req.headers["x-api-key"]}`);
+    });
+    const result = await testUpstreamConfig(
+      makeApi({
+        upstreamUrl: url,
+        upstreamHeaderName: "X-Api-Key",
+        upstreamHeaderValueEnc: `enc:${HEADER_SECRET}`,
+        upstreamQueryName: "api_key",
+        upstreamQueryValueEnc: `enc:${QUERY_SECRET}`,
+      }),
+      deps(),
+    );
+    expect(result.status).toBe(500);
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain(HEADER_SECRET);
+    expect(serialized).not.toContain(QUERY_SECRET);
+    expect(serialized).not.toContain("bad request");
+  });
+
   it("passes the private-upstream policy through to the client", async () => {
     const stream = vi.fn().mockRejectedValue(new UpstreamError("blocked", "not public"));
     const result = await testUpstreamConfig(makeApi(), deps({ stream, allowPrivate: false }));
