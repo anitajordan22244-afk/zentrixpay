@@ -1,13 +1,13 @@
-import type { NextFunction, Request, Response } from 'express';
-import { Router } from 'express';
-import { and, eq, gt, sql } from 'drizzle-orm';
-import { db } from '../db/index.js';
-import { apiCalls, apis as apiTable, apiPasses } from '../db/schema.js';
-import type { ApiRow } from '../db/schema.js';
-import { config } from '../config.js';
-import { paymentHeader, payerFromPayment } from '../lib/payer.js';
-import { sharedX402ResourceServer } from '../lib/x402.js';
-import { getLogger } from '../lib/logger.js';
+import type { NextFunction, Request, Response } from "express";
+import { Router } from "express";
+import { and, eq, gt, sql } from "drizzle-orm";
+import { db } from "../db/index.js";
+import { apiCalls, apis as apiTable, apiPasses } from "../db/schema.js";
+import type { ApiRow } from "../db/schema.js";
+import { config } from "../config.js";
+import { paymentHeader, payerFromPayment } from "../lib/payer.js";
+import { sharedX402ResourceServer } from "../lib/x402.js";
+import { getLogger } from "../lib/logger.js";
 
 export interface ApiPaywallOptions {
   price?: string;
@@ -24,7 +24,7 @@ export interface ApiPaywallOptions {
 const middlewareCache = new Map<string, ReturnType<typeof buildMiddleware>>();
 
 function buildMiddleware(api: ApiRow, options: ApiPaywallOptions) {
-  let price = options.price ?? api.price ?? '$0.01';
+  let price = options.price ?? api.price ?? "$0.01";
   const network = options.network ?? config.NETWORK;
   const payTo = api.walletAddress;
 
@@ -39,17 +39,20 @@ function buildMiddleware(api: ApiRow, options: ApiPaywallOptions) {
         // Count calls for this payer and API in the current calendar month
         const now = new Date();
         const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-        const [{ count }] = await db.select({ count: sql<number>`count(*)` })
+        const [{ count }] = await db
+          .select({ count: sql<number>`count(*)` })
           .from(apiCalls)
           .where(
             and(
               eq(apiCalls.apiId, api.id),
               eq(apiCalls.payer, payer),
-              gt(apiCalls.createdAt, monthStart)
-            )
+              gt(apiCalls.createdAt, monthStart),
+            ),
           );
         // Find the appropriate tier
-        const sortedRules = [...api.price_rules].sort((a: any, b: any) => (a.upTo ?? Infinity) - (b.upTo ?? Infinity));
+        const sortedRules = [...api.price_rules].sort(
+          (a: any, b: any) => (a.upTo ?? Infinity) - (b.upTo ?? Infinity),
+        );
         for (const rule of sortedRules) {
           const limit = rule.upTo ?? Infinity;
           if (count < limit) {
@@ -63,10 +66,9 @@ function buildMiddleware(api: ApiRow, options: ApiPaywallOptions) {
         }
       } catch (e) {
         // If tier calculation fails, fall back to default price
-        console.error('Tier pricing calculation error:', e);
+        console.error("Tier pricing calculation error:", e);
       }
     }
-    try {
     try {
       const resourceServer = await sharedX402ResourceServer({
         network,
@@ -117,7 +119,7 @@ export async function checkPayerAccess(
   const api = res.locals.api as ApiRow | undefined;
 
   if (!api) {
-    res.status(500).json({ error: 'checkPayerAccess requires res.locals.api' });
+    res.status(500).json({ error: "checkPayerAccess requires res.locals.api" });
     return;
   }
 
@@ -125,7 +127,10 @@ export async function checkPayerAccess(
   // The provider key is stored on the API row (e.g., `providerKey`).
   // This allows the API owner to test their endpoint without incurring charges.
   const providerKey = (api as any).providerKey;
-  const headerKey = typeof req.headers['x-provider-key'] === 'string' ? req.headers['x-provider-key'] as string : undefined;
+  const headerKey =
+    typeof req.headers["x-provider-key"] === "string"
+      ? (req.headers["x-provider-key"] as string)
+      : undefined;
   if (providerKey && headerKey && headerKey === providerKey) {
     // Mark the request as an owner sandbox call for downstream stats handling.
     (res.locals as any).ownerSandbox = true;
@@ -158,8 +163,8 @@ export async function checkPayerAccess(
       if (activePass) {
         // Payer holds an active pass — bypass the paywall entirely.
         getLogger().debug(
-          { event: 'api_pass_used', apiId: api.id, passId: activePass.id, payerAddress },
-          'payer has active pass; skipping paywall',
+          { event: "api_pass_used", apiId: api.id, passId: activePass.id, payerAddress },
+          "payer has active pass; skipping paywall",
         );
         res.locals.passId = activePass.id;
         res.locals.freeCall = false;
@@ -168,8 +173,8 @@ export async function checkPayerAccess(
       }
     } catch (err) {
       getLogger().warn(
-        { event: 'api_pass_check_failed', apiId: api.id, payerAddress, err },
-        'pass check failed; falling through to paywall',
+        { event: "api_pass_check_failed", apiId: api.id, payerAddress, err },
+        "pass check failed; falling through to paywall",
       );
     }
   }
@@ -200,13 +205,13 @@ export async function checkPayerAccess(
         // downstream recorder knows not to charge.
         getLogger().debug(
           {
-            event: 'api_free_call',
+            event: "api_free_call",
             apiId: api.id,
             payerAddress,
             usedToday,
             freeQuota,
           },
-          'payer within free quota; skipping paywall',
+          "payer within free quota; skipping paywall",
         );
         res.locals.freeCall = true;
         next();
@@ -214,8 +219,8 @@ export async function checkPayerAccess(
       }
     } catch (err) {
       getLogger().warn(
-        { event: 'api_free_quota_check_failed', apiId: api.id, payerAddress, err },
-        'free quota check failed; falling through to paywall',
+        { event: "api_free_quota_check_failed", apiId: api.id, payerAddress, err },
+        "free quota check failed; falling through to paywall",
       );
     }
   }
@@ -230,7 +235,7 @@ export function apiPaywall(options: ApiPaywallOptions = {}) {
     const api = res.locals.api as ApiRow | undefined;
 
     if (!api) {
-      return res.status(500).json({ error: 'apiPaywall requires res.locals.api' });
+      return res.status(500).json({ error: "apiPaywall requires res.locals.api" });
     }
 
     // If checkPayerAccess already cleared this request (active pass or free
@@ -239,7 +244,7 @@ export function apiPaywall(options: ApiPaywallOptions = {}) {
       return next();
     }
 
-    const cacheKey = `${api.id}:${options.price ?? api.price ?? ''}:${options.network ?? api.network ?? ''}`;
+    const cacheKey = `${api.id}:${options.price ?? api.price ?? ""}:${options.network ?? api.network ?? ""}`;
 
     let middleware = middlewareCache.get(cacheKey);
     if (!middleware) {
@@ -252,9 +257,9 @@ export function apiPaywall(options: ApiPaywallOptions = {}) {
 }
 
 function matchesPathPattern(pattern: string, path: string): boolean {
-  if (!pattern.includes('*')) return pattern === path;
+  if (!pattern.includes("*")) return pattern === path;
 
-  const parts = pattern.split('*');
+  const parts = pattern.split("*");
   let offset = 0;
   if (parts[0]) {
     if (!path.startsWith(parts[0])) return false;
@@ -264,34 +269,37 @@ function matchesPathPattern(pattern: string, path: string): boolean {
   for (let index = 1; index < parts.length; index++) {
     const part = parts[index];
     if (!part) continue;
-    if (index === parts.length - 1 && !pattern.endsWith('*')) {
+    if (index === parts.length - 1 && !pattern.endsWith("*")) {
       return path.endsWith(part) && path.length - part.length >= offset;
     }
     const foundAt = path.indexOf(part, offset);
     if (foundAt === -1) return false;
     offset = foundAt + part.length;
   }
-  return pattern.endsWith('*') || offset === path.length;
+  return pattern.endsWith("*") || offset === path.length;
 }
 
-export function resolveApiPrice(api: Pick<ApiRow, 'price' | 'priceRules'>, method: string, path: string) {
+export function resolveApiPrice(
+  api: Pick<ApiRow, "price" | "priceRules">,
+  method: string,
+  path: string,
+) {
   const matched = (api.priceRules ?? [])
     .filter((rule) => rule.method === method.toUpperCase())
     .filter((rule) => matchesPathPattern(rule.pathPattern, path))
     .sort((a, b) => {
       const wildcards =
-        (a.pathPattern.match(/\*/g)?.length ?? 0) -
-        (b.pathPattern.match(/\*/g)?.length ?? 0);
+        (a.pathPattern.match(/\*/g)?.length ?? 0) - (b.pathPattern.match(/\*/g)?.length ?? 0);
       if (wildcards !== 0) return wildcards;
       const literalLength =
-        b.pathPattern.replace(/\*/g, '').length - a.pathPattern.replace(/\*/g, '').length;
+        b.pathPattern.replace(/\*/g, "").length - a.pathPattern.replace(/\*/g, "").length;
       return literalLength;
     })[0];
 
   return matched?.price ?? api.price;
 }
 
-export function checkPayerAccess(req: Request, res: Response, next: NextFunction) {
+export function checkPayerAllowDeny(req: Request, res: Response, next: NextFunction) {
   const header = paymentHeader(req);
   if (!header) return next();
 
@@ -299,10 +307,10 @@ export function checkPayerAccess(req: Request, res: Response, next: NextFunction
   const payer = payerFromPayment(header);
   if (!payer.address || !payer.signed) return next();
   if (api.payerDenylist?.includes(payer.address)) {
-    return res.status(403).json({ error: 'This wallet is not allowed to call this API' });
+    return res.status(403).json({ error: "This wallet is not allowed to call this API" });
   }
   if (api.payerAllowlist?.length && !api.payerAllowlist.includes(payer.address)) {
-    return res.status(403).json({ error: 'This API is restricted to approved wallets' });
+    return res.status(403).json({ error: "This API is restricted to approved wallets" });
   }
   return next();
 }
@@ -311,22 +319,22 @@ export async function loadProxiedApi(req: Request, res: Response, next: NextFunc
   const apiId = req.params.apiId ?? req.params.id;
 
   if (!apiId) {
-    return res.status(404).json({ error: 'API not found' });
+    return res.status(404).json({ error: "API not found" });
   }
 
   const rows = await db.select().from(apis).where(eq(apis.id, apiId)).limit(1);
   const api = rows[0];
 
   if (!api || !api.listed) {
-    return res.status(404).json({ error: 'API not found' });
+    return res.status(404).json({ error: "API not found" });
   }
 
   const method = req.method.toUpperCase();
-  const allowed = (api.allowedMethods ?? ['GET', 'POST']).map((m) => m.toUpperCase());
+  const allowed = (api.allowedMethods ?? ["GET", "POST"]).map((m) => m.toUpperCase());
 
   if (!allowed.includes(method)) {
-    res.setHeader('Allow', allowed.join(', '));
-    return res.status(405).json({ error: 'Method not allowed' });
+    res.setHeader("Allow", allowed.join(", "));
+    return res.status(405).json({ error: "Method not allowed" });
   }
 
   res.locals.api = api;

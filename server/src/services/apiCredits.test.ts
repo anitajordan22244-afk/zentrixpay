@@ -1,84 +1,87 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const state = vi.hoisted(() => ({
-  balance: 1,
-  nonces: new Set<string>(),
-  transactionLock: Promise.resolve(),
-}));
+const queue = vi.hoisted(() => ({ results: [] as unknown[][] }));
 
-vi.mock("../db/client.js", () => ({
-  db: {
-    transaction: async (run: (tx: unknown) => Promise<unknown>) => {
-      const previous = state.transactionLock;
-      let release!: () => void;
-      state.transactionLock = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      await previous;
-      const balanceBefore = state.balance;
-      const noncesBefore = new Set(state.nonces);
-      const tx = {
-        insert: () => {
-          let entry: { requestNonce?: string } | undefined;
-          const query = {
-            values: (value: { requestNonce?: string }) => {
-              entry = value;
-              return query;
-            },
-            onConflictDoNothing: () => query,
-            returning: async () => {
-              const nonce = entry?.requestNonce;
-              if (nonce && state.nonces.has(nonce)) return [];
-              if (nonce) state.nonces.add(nonce);
-              return [{ id: "ledger-entry" }];
-            },
-          };
-          return query;
-        },
-        update: () => {
-          const query = {
-            set: () => query,
-            where: () => query,
-            returning: async () => {
-              if (state.balance === 0) return [];
-              state.balance -= 1;
-              return [{ balance: state.balance }];
-            },
-          };
-          return query;
-        },
-      };
-      try {
-        return await run(tx);
-      } catch (error) {
-        state.balance = balanceBefore;
-        state.nonces = noncesBefore;
-        throw error;
-      } finally {
-        release();
-      }
+function chain() {
+  const next = () => queue.results.shift() ?? [];
+  const c: Record<string, unknown> = {};
+  for (const m of [
+    "values",
+    "onConflictDoNothing",
+    "onConflictDoUpdate",
+    "set",
+    "where",
+    "limit",
+    "from",
+    "select",
+  ]) {
+    c[m] = vi.fn(() => c);
+  }
+  c.returning = vi.fn(() => Promise.resolve(next()));
+  c.then = (res: (v: unknown) => unknown, rej: (e: unknown) => unknown) =>
+    Promise.resolve(next()).then(res, rej);
+  return c;
+}
+
+vi.mock("../db/client.js", () => {
+  const tx = {
+    insert: vi.fn(() => chain()),
+    update: vi.fn(() => chain()),
+    select: vi.fn(() => chain()),
+  };
+  return {
+    db: {
+      transaction: vi.fn((fn: (t: typeof tx) => unknown) => fn(tx)),
+      select: vi.fn(() => chain()),
     },
-  },
-}));
+    __tx: tx,
+  };
+});
 
-import { ApiCreditError, spendApiCredit } from "./apiCredits.js";
+import { db } from "../db/client.js";
+import { ApiCreditError, purchaseApiCredits, spendApiCredit } from "./apiCredits.js";
 
-describe("spendApiCredit", () => {
+const args = { apiId: "api-1", walletAddress: "GWALLET" };
+
+describe("prepaid call credits", () => {
   beforeEach(() => {
-    state.balance = 1;
-    state.nonces.clear();
-    state.transactionLock = Promise.resolve();
+    queue.results = [];
+    vi.clearAllMocks();
   });
 
-  it("allows only one of two concurrent requests to spend the last credit", async () => {
-    const results = await Promise.allSettled([
-      spendApiCredit({ apiId: "api1", walletAddress: "wallet", nonce: "nonce-request-0001" }),
-      spendApiCredit({ apiId: "api1", walletAddress: "wallet", nonce: "nonce-request-0002" }),
-    ]);
+  it("buying credits adds the purchased calls to the balance", async () => {
+    queue.results = [[{ id: 1 }], [{ balance: 5 }]];
+    await expect(purchaseApiCredits({ ...args, calls: 5, reference: "ref-1" })).resolves.toEqual({
+      balance: 5,
+      duplicate: false,
+    });
+    expect(db.transaction).toHaveBeenCalledTimes(1);
+  });
 
-    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
-    const rejected = results.find((result) => result.status === "rejected");
-    expect(rejected).toMatchObject({ reason: expect.any(ApiCreditError) });
-    expect(state.balance).toBe(0);
+  it("a repeated purchase reference does not add credits twice", async () => {
+    queue.results = [[], [{ balance: 5 }]];
+    await expect(purchaseApiCredits({ ...args, calls: 5, reference: "ref-1" })).resolves.toEqual({
+      balance: 5,
+      duplicate: true,
+    });
+  });
+
+  it("spending one credit per signed call returns the remaining balance", async () => {
+    queue.results = [[{ id: 2 }], [{ balance: 4 }]];
+    await expect(spendApiCredit({ ...args, nonce: "n-1" })).resolves.toBe(4);
+  });
+
+  it("rejects a replayed nonce with 409", async () => {
+    queue.results = [[]];
+    const err = await spendApiCredit({ ...args, nonce: "n-1" }).catch((e) => e);
+    expect(err).toBeInstanceOf(ApiCreditError);
+    expect(err.status).toBe(409);
+  });
+
+  it("returns 402 when the balance is exhausted", async () => {
+    queue.results = [[{ id: 3 }], []];
+    const err = await spendApiCredit({ ...args, nonce: "n-2" }).catch((e) => e);
+    expect(err).toBeInstanceOf(ApiCreditError);
+    expect(err.status).toBe(402);
   });
 });
