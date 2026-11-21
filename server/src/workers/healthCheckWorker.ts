@@ -50,8 +50,17 @@ export async function checkApiHealth(api: ApiRow): Promise<boolean> {
     );
   }
   try {
+    const url = new URL(healthCheckUrl(api));
+    // ...and upstreams that authenticate with a secret query parameter (e.g. ?api_key=)
+    // need it on the health-check URL, matching what the proxy sends.
+    if (api.upstreamQueryName && api.upstreamQueryValueEnc && upstreamKeyRing.length > 0) {
+      url.searchParams.set(
+        api.upstreamQueryName,
+        decryptSecret(api.upstreamQueryValueEnc, upstreamKeyRing, config.UPSTREAM_SECRET_KEY),
+      );
+    }
     const res = await sendUpstream({
-      url: healthCheckUrl(api),
+      url: url.toString(),
       method: "GET",
       headers,
       timeoutMs: config.HEALTH_CHECK_TIMEOUT_MS,

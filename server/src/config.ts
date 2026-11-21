@@ -1,4 +1,7 @@
 import dotenv from "dotenv";
+import { z } from "zod";
+import { envBoolean } from "./lib/envBoolean.js";
+import { logger as rootLogger } from "./lib/logger.js";
 
 dotenv.config();
 
