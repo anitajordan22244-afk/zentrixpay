@@ -1,4 +1,6 @@
 import dotenv from "dotenv";
+import { z } from "zod";
+import { envBoolean } from "./lib/envBoolean.js";
 
 dotenv.config();
 
@@ -99,6 +101,10 @@ const envSchema = z.object({
   // Default and ceiling for a single upstream call. Kept under REQUEST_TIMEOUT_MS.
   PROXY_DEFAULT_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
   PROXY_MAX_TIMEOUT_MS: z.coerce.number().int().positive().default(25_000),
+  // Minimum notice (hours) a provider must give before a scheduled price takes effect.
+  PRICE_CHANGE_MIN_NOTICE_HOURS: z.coerce.number().min(0).default(24),
+  // How often the worker applies scheduled price changes that have come due.
+  PRICE_CHANGE_WORKER_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
   // Idempotency-Key replay for paid calls: record lifetime and largest cached
   // response. The entry-count limit applies to the in-memory test store only.
   PROXY_IDEMPOTENCY_TTL_MS: z.coerce.number().int().positive().default(3_600_000),

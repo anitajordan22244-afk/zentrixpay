@@ -54,6 +54,9 @@ export const apis = pgTable(
     upstreamUrl: text("upstream_url").notNull(),
     price: text("price").notNull(), // USDC per call
     priceRules: jsonb("price_rules").$type<ApiPriceRule[]>().notNull().default([]),
+    // Price change notice (#228): `scheduledPrice` replaces `price` at `effectiveAt`.
+    scheduledPrice: text("scheduled_price"),
+    effectiveAt: timestamp("effective_at", { withTimezone: true }),
     walletAddress: text("wallet_address").notNull(),
     allowedMethods: jsonb("allowed_methods").$type<string[]>().notNull().default(["GET"]),
     payerAllowlist: jsonb("payer_allowlist").$type<string[] | null>(),

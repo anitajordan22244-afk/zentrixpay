@@ -191,6 +191,71 @@ export async function fetchMyApis(apiKey: string): Promise<OwnerApi[]> {
   return readJson(await signedPublisherFetch(absolute("/publishers/me/apis"), apiKey));
 }
 
+export interface PayoutRow {
+  payeeWallet: string;
+  apiId: string;
+  apiName: string;
+  chargedCalls: number;
+  revenue: string;
+}
+
+export interface PayoutSummary {
+  from: string | null;
+  to: string | null;
+  currency: "USDC";
+  totals: { chargedCalls: number; revenue: string };
+  rows: PayoutRow[];
+}
+
+export interface PayoutRange {
+  from?: string;
+  to?: string;
+}
+
+function payoutsQuery(range: PayoutRange, format?: "csv"): string {
+  const params = new URLSearchParams();
+  if (range.from) params.set("from", new Date(range.from).toISOString());
+  if (range.to) params.set("to", new Date(range.to).toISOString());
+  if (format) params.set("format", format);
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+/** Charged revenue per payee wallet and API for a date window (`to` exclusive). */
+export async function fetchPayouts(apiKey: string, range: PayoutRange = {}): Promise<PayoutSummary> {
+  return readJson(
+    await signedPublisherFetch(absolute(`/publishers/me/payouts${payoutsQuery(range)}`), apiKey),
+  );
+}
+
+/** Fetch an owner-only CSV endpoint and save it, authenticated like other owner requests. */
+export async function downloadCsv(apiKey: string, path: string, filename: string): Promise<void> {
+  const res = await signedPublisherFetch(absolute(path), apiKey);
+  if (!res.ok) throw new Error(errorText(await res.json().catch(() => null), res.status));
+  const url = URL.createObjectURL(await res.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** Download the payouts table as CSV. */
+export async function downloadPayoutsCsv(apiKey: string, range: PayoutRange = {}): Promise<void> {
+  return downloadCsv(apiKey, `/publishers/me/payouts${payoutsQuery(range, "csv")}`, "payouts.csv");
+}
+
+/** Download an API's call history as CSV (streamed by the server), optionally within a window. */
+export async function downloadApiCallsCsv(
+  apiKey: string,
+  apiId: string,
+  range: PayoutRange = {},
+): Promise<void> {
+  return downloadCsv(apiKey, `/apis/${encodeURIComponent(apiId)}/calls.csv${payoutsQuery(range)}`, `api-${apiId}-calls.csv`);
+}
+
 export async function createApi(apiKey: string, input: ApiInput): Promise<OwnerApi> {
   return readJson(
     await signedPublisherFetch(absolute("/apis"), apiKey, {

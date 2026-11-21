@@ -7,6 +7,16 @@ import { isPublicAddress } from "./upstreamGuard.js";
 
 export type UpstreamErrorKind = "blocked" | "timeout" | "too_large" | "network";
 
+/** Stable, documented machine-readable code for each upstream failure kind. */
+export const UPSTREAM_ERROR_CODES = {
+  blocked: "upstream_blocked",
+  network: "upstream_network",
+  too_large: "upstream_too_large",
+  timeout: "upstream_timeout",
+} as const satisfies Record<UpstreamErrorKind, string>;
+
+export type UpstreamErrorCode = (typeof UPSTREAM_ERROR_CODES)[UpstreamErrorKind];
+
 export class UpstreamError extends Error {
   constructor(
     public readonly kind: UpstreamErrorKind,

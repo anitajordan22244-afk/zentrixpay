@@ -134,7 +134,7 @@ export const API_TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "zentrixpay_api_info",
     description:
-      "Show one API's details: price per call, allowed methods, payee wallet and proxy URL.",
+      "Show one API's details: price per call, allowed methods, payee wallet and proxy URL. When a price change is scheduled, pendingPriceChange gives the upcoming price and its effectiveAt time.",
     inputSchema: {
       type: "object",
       properties: { apiId: API_ID },

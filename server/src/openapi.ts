@@ -262,10 +262,21 @@ export const openApiSpec: OpenApiDocument = {
       },
       UpstreamError: {
         type: "object",
-        required: ["error", "reason"],
+        description:
+          "Returned when the upstream API could not be called. `code` is the stable, machine-readable error code; `reason` is the legacy kind (kept for compatibility).",
+        required: ["error", "reason", "code"],
         properties: {
           error: { type: "string", enum: ["upstream_failed"] },
           reason: { type: "string", enum: ["blocked", "network", "too_large", "timeout"] },
+          code: {
+            type: "string",
+            enum: [
+              "upstream_blocked",
+              "upstream_network",
+              "upstream_too_large",
+              "upstream_timeout",
+            ],
+          },
         },
       },
       HttpMethod: { type: "string", enum: ["GET", "POST", "PUT", "PATCH", "DELETE"] },

@@ -8,6 +8,7 @@ import express, {
 } from "express";
 import multer from "multer";
 import { apiKeyAuth } from "../middleware/apiKeyAuth.js";
+import { writeCallsCsv } from "../services/apiCallsExport.js";
 import { requestSignatureAuth } from "../middleware/requestSignatureAuth.js";
 import { payeeSignatureAuth } from "../middleware/payeeSignatureAuth.js";
 import { validate } from "../middleware/validate.js";
@@ -58,7 +59,7 @@ import {
   prepareApiRegistration,
 } from "../services/apiOnchain.js";
 import { confirmCallRefund, prepareCallRefund } from "../services/apiRefunds.js";
-import { sendUpstream, streamUpstream, UpstreamError } from "../lib/upstreamClient.js";
+import { sendUpstream, streamUpstream, UPSTREAM_ERROR_CODES, UpstreamError } from "../lib/upstreamClient.js";
 import { filterRequestHeaders, filterResponseHeaders } from "../lib/proxyHeaders.js";
 import { paymentHeader, paymentHeaderHash, payerFromPayment } from "../lib/payer.js";
 import {
@@ -277,6 +278,33 @@ router.get("/apis/:id/stats", apiKeyAuth, async (req, res) => {
   }
 });
 
+// GET /apis/:id/calls.csv?from&to — streamed CSV of the call history (owner only)
+router.get("/apis/:id/calls.csv", apiKeyAuth, async (req, res) => {
+  const query = apiStatsQuerySchema.safeParse(req.query);
+  if (!query.success) {
+    res.status(400).json({ error: query.error.format() });
+    return;
+  }
+  let api;
+  try {
+    api = await getOwnedApi(req.params.id as string, req.publisher!.id, { includeArchived: true });
+  } catch (err) {
+    sendServiceError(res, err);
+    return;
+  }
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="api-${api.id}-calls.csv"`);
+  res.setHeader("Cache-Control", "no-store");
+  res.flushHeaders();
+  try {
+    await writeCallsCsv(res, api.id, { from: query.data.from, to: query.data.to });
+    res.end();
+  } catch (err) {
+    getLogger().error({ event: "api_calls_export_failed", apiId: api.id, err }, "CSV export failed");
+    res.destroy(err instanceof Error ? err : undefined);
+  }
+});
+
 // GET /apis/:id/stats/time-series?days=7|30|90 — per-day calls and revenue (owner)
 router.get("/apis/:id/stats/time-series", apiKeyAuth, async (req, res) => {
   try {
@@ -466,7 +494,7 @@ async function proxyHandler(req: Request, res: Response) {
   const segments = (req.params.path as unknown as string[] | undefined) ?? [];
   const target = buildUpstreamUrl(api.upstreamUrl, segments, req.originalUrl);
   if (!target) {
-    res.status(400).json({ error: "Invalid path" });
+    res.status(400).json({ error: "Invalid path", code: "invalid_path" });
     return;
   }
 
@@ -536,7 +564,7 @@ async function proxyHandler(req: Request, res: Response) {
         );
         res
           .status(UPSTREAM_ERROR_STATUS[err.kind])
-          .json({ error: "upstream_failed", reason: err.kind });
+          .json({ error: "upstream_failed", reason: err.kind, code: UPSTREAM_ERROR_CODES[err.kind] });
         return;
       }
       throw err;
@@ -586,7 +614,7 @@ async function proxyHandler(req: Request, res: Response) {
       );
       res
         .status(UPSTREAM_ERROR_STATUS[err.kind])
-        .json({ error: "upstream_failed", reason: err.kind });
+        .json({ error: "upstream_failed", reason: err.kind, code: UPSTREAM_ERROR_CODES[err.kind] });
       return;
     }
     throw err;

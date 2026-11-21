@@ -2,8 +2,12 @@ import React, { useState } from "react";
 import {
   HTTP_METHODS,
   createApi,
+  downloadApiCallsCsv,
+  downloadPayoutsCsv,
   fetchApiStats,
   fetchMyApis,
+  fetchPayouts,
+  type PayoutSummary,
   registerPublisher,
   updateApi,
   verifyApiOwnership,
@@ -869,6 +873,13 @@ function ApiCard({
         >
           {stats ? "Hide stats" : busy === "Stats" ? "Loading…" : "Stats"}
         </button>
+        <button
+          className={secondaryButton}
+          disabled={busy !== null}
+          onClick={() => run("Export", () => downloadApiCallsCsv(apiKey, api.id))}
+        >
+          {busy === "Export" ? "Exporting…" : "Export calls CSV"}
+        </button>
       </div>
 
       {error && (
@@ -882,6 +893,112 @@ function ApiCard({
 }
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
+
+/** Revenue per payee wallet and API for a chosen window, with CSV export. */
+function PayoutsPanel({ apiKey }: { apiKey: string }) {
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [range, setRange] = useState<{ from?: string; to?: string }>({});
+  const [summary, setSummary] = useState<PayoutSummary | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function load(next: { from?: string; to?: string }) {
+    setLoading(true);
+    setError(null);
+    try {
+      setSummary(await fetchPayouts(apiKey, next));
+      setRange(next);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load payouts");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function exportCsv() {
+    setError(null);
+    try {
+      await downloadPayoutsCsv(apiKey, range);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to export payouts");
+    }
+  }
+
+  return (
+    <section aria-labelledby="payouts-heading" className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <h3 id="payouts-heading" className="text-base font-semibold text-gray-900 dark:text-gray-100">
+          Payouts by wallet
+        </h3>
+        <div className="flex flex-wrap items-end gap-2 text-xs">
+          <label className="flex flex-col gap-1">
+            From
+            <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="rounded border px-2 py-1" />
+          </label>
+          <label className="flex flex-col gap-1">
+            To
+            <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="rounded border px-2 py-1" />
+          </label>
+          <button
+            className={secondaryButton}
+            disabled={loading}
+            onClick={() =>
+              load({
+                from: from || undefined,
+                to: to ? new Date(`${to}T00:00:00Z`).toISOString() : undefined,
+              })
+            }
+          >
+            {loading ? "Loading…" : "Load"}
+          </button>
+          <button className={secondaryButton} disabled={!summary} onClick={exportCsv}>
+            Export CSV
+          </button>
+        </div>
+      </div>
+
+      {error && <ErrorBanner message={error} />}
+
+      {summary && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead>
+              <tr>
+                <th scope="col" className="px-2 py-1">Payee wallet</th>
+                <th scope="col" className="px-2 py-1">API</th>
+                <th scope="col" className="px-2 py-1 text-right">Charged calls</th>
+                <th scope="col" className="px-2 py-1 text-right">Revenue (USDC)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary.rows.map((row) => (
+                <tr key={`${row.payeeWallet}-${row.apiId}`} className="border-t">
+                  <td className="px-2 py-1 font-mono">{row.payeeWallet}</td>
+                  <td className="px-2 py-1">{row.apiName}</td>
+                  <td className="px-2 py-1 text-right">{row.chargedCalls}</td>
+                  <td className="px-2 py-1 text-right">{row.revenue}</td>
+                </tr>
+              ))}
+              {summary.rows.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="px-2 py-3 text-center text-gray-500">No charged calls in this period.</td>
+                </tr>
+              )}
+            </tbody>
+            <tfoot>
+              <tr className="border-t font-semibold">
+                <td className="px-2 py-1" colSpan={2}>Total</td>
+                <td className="px-2 py-1 text-right">{summary.totals.chargedCalls}</td>
+                <td className="px-2 py-1 text-right">{summary.totals.revenue}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
 
 export function ProviderDashboard({
   wallet,
@@ -957,6 +1074,8 @@ export function ProviderDashboard({
           You have not registered any APIs yet.
         </p>
       )}
+
+      <PayoutsPanel apiKey={apiKey} />
 
       {apis.length > 0 && (
         <ul className="flex flex-col gap-4">

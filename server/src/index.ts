@@ -12,6 +12,7 @@ import { beginShutdown, whenDrained, inFlightCount } from "./lib/lifecycle.js";
 import { pgClient } from "./db/client.js";
 import { startPoolMetrics, stopPoolMetrics } from "./db/client.js";
 import { startHealthCheckWorker, stopHealthCheckWorker } from "./workers/healthCheckWorker.js";
+import { startPriceChangeWorker, stopPriceChangeWorker } from "./workers/priceChangeWorker.js";
 import {
   startApiCallRetentionWorker,
   stopApiCallRetentionWorker,
@@ -38,6 +39,7 @@ const server: Server = app.listen(config.PORT, () => {
   );
 
   startHealthCheckWorker();
+  startPriceChangeWorker();
   startApiCallRetentionWorker();
   startApiCallRecoveryWorker();
   startPoolMetrics();
@@ -50,6 +52,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
   shuttingDown = true;
 
   stopHealthCheckWorker();
+  stopPriceChangeWorker();
   stopApiCallRetentionWorker();
   stopApiCallRecoveryWorker();
   stopPoolMetrics();

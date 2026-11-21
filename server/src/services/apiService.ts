@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { and, asc, desc, eq, gt, ilike, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, ilike, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { apiCalls, apis } from "../db/schema.js";
 import { config, upstreamKeyRing } from "../config.js";
@@ -54,6 +54,8 @@ export function toPublicApi(api: ApiRow) {
     description: api.description,
     price: api.price,
     currency: "USDC",
+    // Issue #228: an upcoming price change, so agents can see it before it applies.
+    pendingPriceChange: pendingPriceChangeOf(api),
     walletAddress: api.walletAddress,
     allowedMethods: api.allowedMethods,
     priceRules: api.priceRules ?? [],
@@ -242,6 +244,7 @@ function toOwnerApi(api: ApiRecord): OwnerApi {
     upstreamUrl: api.upstreamUrl,
     upstreamMethod: api.upstreamMethod,
     price: api.price,
+    pendingPriceChange: pendingPriceChangeOf(api),
     walletAddress: api.walletAddress,
     listed: api.listed,
     ownershipVerified: api.ownershipVerified,
@@ -397,6 +400,67 @@ export interface UpdateApiInput {
   passPrice?: string | null;
   /** Issue #32: 0 disables free calls. */
   freeCallsPerDay?: number;
+  /** Issue #228: a future price and when it takes effect; null cancels a pending change. */
+  scheduledPrice?: string | null;
+  effectiveAt?: string | null;
+}
+
+/**
+ * Issue #228: validate a scheduled price change and return the column values to
+ * write. Returns {} when the update does not touch the schedule.
+ * A new `price` supersedes any pending change, so the schedule is cleared with it.
+ */
+export function scheduledPriceChanges(
+  api: Pick<ApiRow, "price" | "scheduledPrice" | "effectiveAt">,
+  input: Pick<UpdateApiInput, "price" | "scheduledPrice" | "effectiveAt">,
+  now: Date = new Date(),
+): { scheduledPrice: string | null; effectiveAt: Date | null } | Record<string, never> {
+  if (input.scheduledPrice === undefined && input.effectiveAt === undefined) {
+    if (input.price !== undefined && input.price !== api.price && api.scheduledPrice) {
+      return { scheduledPrice: null, effectiveAt: null };
+    }
+    return {};
+  }
+  if (input.scheduledPrice === null) {
+    return { scheduledPrice: null, effectiveAt: null };
+  }
+  if (input.scheduledPrice === undefined || input.effectiveAt === undefined || input.effectiveAt === null) {
+    throw new ApiServiceError(422, "scheduledPrice and effectiveAt must be provided together");
+  }
+  const effectiveAt = new Date(input.effectiveAt);
+  const minNoticeMs = config.PRICE_CHANGE_MIN_NOTICE_HOURS * 60 * 60 * 1000;
+  if (effectiveAt.getTime() < now.getTime() + minNoticeMs) {
+    throw new ApiServiceError(
+      422,
+      `effectiveAt must be at least ${config.PRICE_CHANGE_MIN_NOTICE_HOURS} hours from now`,
+    );
+  }
+  if (input.scheduledPrice === api.price) {
+    throw new ApiServiceError(422, "scheduledPrice must differ from the current price");
+  }
+  return { scheduledPrice: input.scheduledPrice, effectiveAt };
+}
+
+/** Issue #228: promote every scheduled price whose effective time has passed. Returns the number applied. */
+export async function applyDuePriceChanges(now: Date = new Date()): Promise<number> {
+  const due = await db
+    .update(apis)
+    .set({
+      price: sql`${apis.scheduledPrice}`,
+      scheduledPrice: null,
+      effectiveAt: null,
+    })
+    .where(
+      and(isNotNull(apis.scheduledPrice), isNotNull(apis.effectiveAt), lte(apis.effectiveAt, now)),
+    )
+    .returning({ id: apis.id });
+  return due.length;
+}
+
+/** The pending price change shown to callers and the owner, or null when none is scheduled. */
+export function pendingPriceChangeOf(api: Pick<ApiRow, "scheduledPrice" | "effectiveAt">) {
+  if (!api.scheduledPrice || !api.effectiveAt) return null;
+  return { price: api.scheduledPrice, effectiveAt: api.effectiveAt.toISOString(), currency: "USDC" as const };
 }
 
 export async function updateApi(api: ApiRow, input: UpdateApiInput): Promise<ApiRow> {
@@ -404,6 +468,12 @@ export async function updateApi(api: ApiRow, input: UpdateApiInput): Promise<Api
   // so the on-chain record never drifts from what callers are charged.
   if (api.onchainStatus === "registered" || api.onchainStatus === "pending") {
     if (input.price !== undefined && input.price !== api.price) {
+      throw new ApiServiceError(
+        409,
+        `This API's price is anchored on-chain; change it with POST /apis/${api.id}/price/prepare`,
+      );
+    }
+    if (input.scheduledPrice !== undefined) {
       throw new ApiServiceError(
         409,
         `This API's price is anchored on-chain; change it with POST /apis/${api.id}/price/prepare`,
@@ -417,10 +487,13 @@ export async function updateApi(api: ApiRow, input: UpdateApiInput): Promise<Api
     }
   }
 
+  const schedule = scheduledPriceChanges(api, input);
+
   const changes: Partial<typeof apis.$inferInsert> = {
     name: input.name,
     description: input.description,
     price: input.price,
+    ...schedule,
     priceRules: input.priceRules === null ? [] : input.priceRules,
     walletAddress: input.walletAddress,
     allowedMethods: input.allowedMethods,
@@ -664,6 +737,62 @@ export async function getPublisherAnalytics(publisherId: string) {
       currency: "USDC" as const,
     },
     apis: perApi,
+  };
+}
+
+export interface PayoutRange {
+  from?: Date;
+  to?: Date;
+}
+
+export interface PayoutRow {
+  payeeWallet: string;
+  apiId: string;
+  apiName: string;
+  chargedCalls: number;
+  revenue: string;
+}
+
+/**
+ * Charged revenue for a publisher, grouped by the payee wallet each API pays
+ * out to and by API. `from` is inclusive and `to` exclusive, matching the
+ * stats windows, so back-to-back periods never double count a call.
+ */
+export async function getPublisherPayouts(publisherId: string, range: PayoutRange = {}) {
+  const conditions = [eq(apis.publisherId, publisherId), eq(apiCalls.charged, true)];
+  if (range.from) conditions.push(gte(apiCalls.createdAt, range.from));
+  if (range.to) conditions.push(lt(apiCalls.createdAt, range.to));
+
+  const rows: PayoutRow[] = await db
+    .select({
+      payeeWallet: apis.walletAddress,
+      apiId: sql<string>`${apis.id}::text`,
+      apiName: apis.name,
+      chargedCalls: sql<number>`count(${apiCalls.id})::int`,
+      revenue: sql<string>`coalesce(sum(${apiCalls.amount}::numeric), 0)::text`,
+    })
+    .from(apiCalls)
+    .innerJoin(apis, eq(apiCalls.apiId, apis.id))
+    .where(and(...conditions))
+    .groupBy(apis.walletAddress, apis.id, apis.name)
+    .orderBy(apis.walletAddress, apis.name);
+
+  // Totals come from SQL numerics so they match the rows exactly (no float drift).
+  const [total] = await db
+    .select({
+      chargedCalls: sql<number>`count(${apiCalls.id})::int`,
+      revenue: sql<string>`coalesce(sum(${apiCalls.amount}::numeric), 0)::text`,
+    })
+    .from(apiCalls)
+    .innerJoin(apis, eq(apiCalls.apiId, apis.id))
+    .where(and(...conditions));
+
+  return {
+    from: range.from?.toISOString() ?? null,
+    to: range.to?.toISOString() ?? null,
+    currency: "USDC" as const,
+    totals: { chargedCalls: total?.chargedCalls ?? 0, revenue: total?.revenue ?? "0" },
+    rows,
   };
 }
 

@@ -180,6 +180,9 @@ export const updateApiSchema = z
     passPrice: usdcPrice.nullable().optional(),
     // Issue #32: 0 disables free calls.
     freeCallsPerDay: z.number().int().min(0).optional(),
+    // Issue #228: schedule a price change. Both fields together; null cancels a pending change.
+    scheduledPrice: usdcPrice.nullable().optional(),
+    effectiveAt: z.string().datetime({ offset: true }).nullable().optional(),
   })
   .strict();
 
