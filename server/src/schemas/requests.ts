@@ -263,3 +263,15 @@ export const apiStatsQuerySchema = z
   });
 
 export type ApiStatsQuery = z.infer<typeof apiStatsQuerySchema>;
+
+/**
+ * Query for GET /payers/:address/calls — paged call history for a wallet.
+ */
+export const payerCallsQuerySchema = z
+  .object({
+    limit: z.coerce.number().int().min(1).max(100).default(50),
+    offset: z.coerce.number().int().min(0).default(0),
+  })
+  .strict();
+
+export type PayerCallsQuery = z.infer<typeof payerCallsQuerySchema>;

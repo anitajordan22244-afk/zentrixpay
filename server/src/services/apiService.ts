@@ -1,9 +1,33 @@
-import { randomBytes } from "node:crypto";
-import { and, asc, desc, eq, gt, gte, ilike, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
+import { promises as dnsPromises } from "node:dns";
+import { randomBytes, randomUUID } from "node:crypto";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  gte,
+  ilike,
+  isNotNull,
+  isNull,
+  lt,
+  lte,
+  or,
+  sql,
+} from "drizzle-orm";
 import { db } from "../db/client.js";
-import { apiCalls, apis, apiDailyRollups, apiCallFinancialRecords } from "../db/schema.js";
+import {
+  apiCalls,
+  apis,
+  apiDailyRollups,
+  apiCallFinancialRecords,
+  apiPasses,
+  type ApiPriceRule,
+  type ApiRow,
+} from "../db/schema.js";
 import { config, upstreamKeyRing } from "../config.js";
 import { encryptSecret } from "../utils/secretBox.js";
+import { validateUpstreamUrl } from "../lib/upstreamGuard.js";
 import { createTtlCache } from "../lib/ttlCache.js";
 import { statsWhere, type RecentCallsOptions, type StatsRange } from "./apiStatsQuery.js";
 import {
@@ -15,11 +39,146 @@ import {
 } from "./apiCallRecorder.js";
 import { apiCallRecordsPending } from "../lib/metrics.js";
 import { nextHealthCheckAt } from "../lib/healthBackoff.js";
-import { logger as rootLogger } from "../lib/logger.js";
+import { logger } from "../lib/logger.js";
 
 export { statsWhere, type RecentCallsOptions, type StatsRange } from "./apiStatsQuery.js";
 
-export type ApiRow = typeof apis.$inferSelect;
+export interface ApiChangeRecord {
+  id: string;
+  apiId: string;
+  field: string;
+  oldValue: string | null;
+  newValue: string | null;
+  actor: string;
+  createdAt: string;
+}
+
+export interface ApiRecord {
+  id: string;
+  publisherId: string;
+  name: string;
+  description: string | null;
+  upstreamUrl: string;
+  upstreamMethod: string;
+  upstreamHeaderValueEnc: string | null;
+  upstreamQueryValueEnc: string | null;
+  price: string;
+  priceRules: ApiPriceRule[];
+  walletAddress: string;
+  allowedMethods: string[];
+  timeoutMs: number | null;
+  maxResponseBytes: number | null;
+  healthPath: string | null;
+  tags: string[];
+  payerAllowlist: string[] | null;
+  payerDenylist: string[];
+  passPrice: string | null;
+  freeCallsPerDay: number;
+  ownershipToken: string;
+  ownershipVerifiedAt: Date | null;
+  ownershipVerified: boolean;
+  listed: boolean;
+  onchainStatus: string;
+  onchainTxHash: string | null;
+  streamingEnabled: boolean;
+  network: string | null;
+  archivedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  upstreamHeaderName: string | null;
+  upstreamQueryName: string | null;
+  openapiSpec: Record<string, unknown> | null;
+  scheduledPrice: string | null;
+  effectiveAt: Date | null;
+}
+
+export interface OwnerApi {
+  id: string;
+  name: string;
+  description: string | null;
+  upstreamUrl: string;
+  upstreamMethod: string;
+  price: string;
+  priceRules: ApiPriceRule[];
+  pendingPriceChange: { price: string; effectiveAt: string; currency: "USDC" } | null;
+  walletAddress: string;
+  allowedMethods: string[];
+  timeoutMs: number | null;
+  maxResponseBytes: number | null;
+  healthPath: string | null;
+  tags: string[];
+  payerAllowlist: string[] | null;
+  payerDenylist: string[];
+  passPrice: string | null;
+  freeCallsPerDay: number;
+  listed: boolean;
+  streamingEnabled: boolean;
+  onchainStatus: string;
+  ownershipVerified: boolean;
+  ownershipVerification: {
+    url: string;
+    expectedContent: string;
+  };
+  nextHealthCheckAt: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface CreateApiInput {
+  publisherId: string;
+  name: string;
+  description?: string | null;
+  upstreamUrl: string;
+  upstreamMethod?: string;
+  upstreamHeaderValueEnc?: string | null;
+  upstreamQueryValueEnc?: string | null;
+  price: string;
+  priceRules?: ApiPriceRule[];
+  walletAddress: string;
+  allowedMethods: string[];
+  upstreamHeader?: { name: string; value: string };
+  upstreamQueryParam?: { name: string; value: string };
+  openapiSpec?: string | Record<string, unknown>;
+  timeoutMs?: number;
+  maxResponseBytes?: number;
+  webhook?: { url: string; secret: string };
+  healthPath?: string;
+  tags: string[];
+  payerAllowlist?: string[];
+  payerDenylist?: string[];
+  passPrice?: string;
+  freeCallsPerDay?: number;
+  streamingEnabled?: boolean;
+}
+
+export interface UpdateApiInput {
+  name?: string;
+  description?: string | null;
+  upstreamUrl?: string;
+  upstreamMethod?: string;
+  upstreamHeaderValueEnc?: string | null;
+  upstreamQueryValueEnc?: string | null;
+  price?: string;
+  priceRules?: ApiPriceRule[] | null;
+  walletAddress?: string;
+  allowedMethods?: string[];
+  upstreamHeader?: { name: string; value: string } | null;
+  upstreamQueryParam?: { name: string; value: string } | null;
+  openapiSpec?: string | Record<string, unknown> | null;
+  timeoutMs?: number | null;
+  maxResponseBytes?: number | null;
+  webhook?: { url: string; secret: string } | null;
+  healthPath?: string | null;
+  tags?: string[];
+  payerAllowlist?: string[] | null;
+  payerDenylist?: string[];
+  listed?: boolean;
+  passPrice?: string | null;
+  freeCallsPerDay?: number;
+  scheduledPrice?: string | null;
+  effectiveAt?: string | null;
+  streamingEnabled?: boolean;
+}
 
 /**
  * Thrown by service functions to signal a known HTTP-mappable failure.
@@ -35,6 +194,15 @@ export class ApiServiceError extends Error {
   }
 }
 
+const WELL_KNOWN_PATH = "/.well-known/zentrixpay.txt";
+const DNS_TXT_PREFIX = "zentrixpay-verification=";
+
+const RESET_HEALTH = {
+  healthy: true,
+  healthFailures: 0,
+  lastHealthCheckAt: null,
+} as const;
+
 // Hot proxied APIs are looked up on every call (#34). Every write to an API
 // goes through this module and invalidates its entry, so edits apply at once
 // in this process; other replicas see them within the TTL.
@@ -48,14 +216,16 @@ export function invalidateApiCache(id: string): void {
   apiCache.delete(id);
 }
 
-export interface ApiChangeRecord {
-  id: string;
-  apiId: string;
-  field: string;
-  oldValue: string | null;
-  newValue: string | null;
-  actor: string;
-  createdAt: string;
+function proxyUrlOf(api: ApiRow): string {
+  return `${config.BASE_URL}/api/${api.id}`;
+}
+
+function ownershipLine(token: string): string {
+  return `${DNS_TXT_PREFIX}${token}`;
+}
+
+function ownershipFileUrl(upstreamUrl: string): string {
+  return new URL(WELL_KNOWN_PATH, new URL(upstreamUrl).origin).toString();
 }
 
 /** What anyone may see about an API. Never includes the upstream URL or secret. */
@@ -66,19 +236,15 @@ export function toPublicApi(api: ApiRow) {
     description: api.description,
     price: api.price,
     currency: "USDC",
-    // Issue #228: an upcoming price change, so agents can see it before it applies.
     pendingPriceChange: pendingPriceChangeOf(api),
     walletAddress: api.walletAddress,
     allowedMethods: api.allowedMethods,
     priceRules: api.priceRules ?? [],
     tags: api.tags,
-    // Issue #30: callers can see whether a pass is offered and at what price.
     passPrice: api.passPrice ?? null,
-    // Issue #32: free calls per day this provider offers to new callers.
     freeCallsPerDay: api.freeCallsPerDay,
     proxyUrl: proxyUrlOf(api),
     openapiUrl: api.openapiSpec ? `${config.BASE_URL}/apis/${api.id}/openapi.json` : null,
-    // Where callers can check price and payee for themselves.
     onchain: {
       registered: api.onchainStatus === "registered",
       contractId: config.REGISTRY_CONTRACT_ID,
@@ -88,41 +254,27 @@ export function toPublicApi(api: ApiRow) {
   };
 }
 
-export interface CreateApiInput {
-  publisherId: string;
-  name: string;
-  description?: string | null;
-  upstreamUrl: string;
-  upstreamMethod?: string;
-  upstreamHeaderValueEnc?: string | null;
-  upstreamQueryValueEnc?: string | null;
-  price: string;
-  walletAddress: string;
-}
-
-export interface UpdateApiInput {
-  name?: string;
-  description?: string | null;
-  upstreamUrl?: string;
-  upstreamMethod?: string;
-  upstreamHeaderValueEnc?: string | null;
-  upstreamQueryValueEnc?: string | null;
-  price?: string;
-  walletAddress?: string;
-}
-
 /** What the owning provider sees. Includes the upstream URL but never the secret value. */
-export function toOwnerApi(api: ApiRow) {
+export function toOwnerApi(api: ApiRow): OwnerApi {
   return {
-    ...toPublicApi(api),
+    id: api.id,
+    name: api.name,
+    description: api.description,
     upstreamUrl: api.upstreamUrl,
-    upstreamHeaderName: api.upstreamHeaderName,
-    hasUpstreamSecret: Boolean(api.upstreamHeaderValueEnc),
-    upstreamQueryParamName: api.upstreamQueryName,
-    hasUpstreamQuerySecret: Boolean(api.upstreamQueryValueEnc),
+    upstreamMethod: api.upstreamMethod,
+    price: api.price,
+    priceRules: api.priceRules ?? [],
+    pendingPriceChange: pendingPriceChangeOf(api),
+    walletAddress: api.walletAddress,
+    allowedMethods: api.allowedMethods,
     timeoutMs: api.timeoutMs,
+    maxResponseBytes: api.maxResponseBytes,
+    healthPath: api.healthPath,
+    tags: api.tags,
     payerAllowlist: api.payerAllowlist,
     payerDenylist: api.payerDenylist,
+    passPrice: api.passPrice ?? null,
+    freeCallsPerDay: api.freeCallsPerDay,
     listed: api.listed,
     streamingEnabled: api.streamingEnabled,
     onchainStatus: api.onchainStatus,
@@ -131,7 +283,6 @@ export function toOwnerApi(api: ApiRow) {
       url: ownershipFileUrl(api.upstreamUrl),
       expectedContent: ownershipLine(api.ownershipToken),
     },
-    // When the health worker next checks this API (#220). Null when there is no health path or it was never checked.
     nextHealthCheckAt: api.healthPath
       ? (nextHealthCheckAt(
           api,
@@ -140,7 +291,36 @@ export function toOwnerApi(api: ApiRow) {
           config.HEALTH_CHECK_MAX_BACKOFF_MS,
         )?.toISOString() ?? null)
       : null,
+    createdAt: api.createdAt,
+    updatedAt: api.updatedAt,
   };
+}
+
+function toPublicOpenApi(api: ApiRow): Record<string, unknown> | null {
+  if (!api.openapiSpec) return null;
+  const spec = { ...api.openapiSpec } as Record<string, unknown>;
+  const paths = spec.paths as Record<string, unknown> | undefined;
+  if (paths) {
+    for (const [path, pathItem] of Object.entries(paths)) {
+      if (pathItem && typeof pathItem === "object") {
+        const item = pathItem as Record<string, unknown>;
+        for (const method of Object.keys(item)) {
+          const op = item[method] as Record<string, unknown> | undefined;
+          if (op && op.servers) {
+            op.servers = [{ url: proxyUrlOf(api) }];
+          }
+        }
+      }
+    }
+  }
+  return spec;
+}
+
+export function effectiveMaxResponseBytes(api: ApiRow): number {
+  const cap = config.PROXY_MAX_RESPONSE_BYTES;
+  return api.maxResponseBytes !== null && api.maxResponseBytes !== undefined
+    ? Math.min(api.maxResponseBytes, cap)
+    : cap;
 }
 
 // Fields that are audited when changed. Secrets are masked in the audit log.
@@ -186,6 +366,13 @@ function maskValue(field: string, value: unknown): string | null {
   return String(value);
 }
 
+function normalizeForCompare(value: unknown): string | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  return String(value);
+}
+
 /** Returns the active key ring, or throws 503 if no key is configured. */
 function activeKeyRing() {
   if (upstreamKeyRing.length === 0) {
@@ -209,11 +396,73 @@ function encryptedHeader(header: { name: string; value: string } | null | undefi
 function encryptedQueryParam(param: { name: string; value: string } | null | undefined) {
   if (param === undefined) return {};
   if (param === null) return { upstreamQueryName: null, upstreamQueryValueEnc: null };
-  // Query parameter names are case-sensitive, so the name is kept as given.
   return {
     upstreamQueryName: param.name,
     upstreamQueryValueEnc: encryptSecret(param.value, activeKeyRing()),
   };
+}
+
+function checkedUpstreamUrl(raw: string): string {
+  try {
+    return validateUpstreamUrl(raw, {
+      allowPrivate: config.PROXY_ALLOW_PRIVATE_UPSTREAMS,
+    }).toString();
+  } catch (err) {
+    throw new ApiServiceError(400, (err as Error).message);
+  }
+}
+
+function clampTimeout(ms: number | null | undefined): number | null {
+  if (ms === undefined || ms === null) return null;
+  const min = config.PROXY_MIN_TIMEOUT_MS ?? 1000;
+  const max = config.PROXY_MAX_TIMEOUT_MS ?? 120_000;
+  return Math.min(Math.max(ms, min), max);
+}
+
+function checkedMaxResponseBytes(bytes: number | null | undefined): number | null {
+  if (bytes === undefined || bytes === null) return null;
+  const cap = config.PROXY_MAX_RESPONSE_BYTES ?? 10 * 1024 * 1024;
+  return Math.min(Math.max(bytes, 0), cap);
+}
+
+function checkedOpenApiSpec(spec: string | Record<string, unknown> | null | undefined) {
+  if (spec === undefined || spec === null) return spec;
+  if (typeof spec === "string") {
+    try {
+      return JSON.parse(spec);
+    } catch {
+      throw new ApiServiceError(400, "openapiSpec must be valid JSON");
+    }
+  }
+  return spec;
+}
+
+function getUpstreamHost(upstreamUrl: string): string {
+  try {
+    return new URL(upstreamUrl).hostname;
+  } catch {
+    return upstreamUrl;
+  }
+}
+
+async function checkWellKnownFile(upstreamUrl: string, token: string): Promise<boolean> {
+  try {
+    const url = new URL(WELL_KNOWN_PATH, upstreamUrl);
+    const response = await fetch(url.toString(), {
+      method: "GET",
+      redirect: "follow",
+    });
+    if (!response.ok) {
+      return false;
+    }
+    const body = await response.text();
+    const expectedLine = `${DNS_TXT_PREFIX}${token}`;
+    const lines = body.split(/\r?\n/).map((line) => line.trim());
+    return lines.includes(expectedLine) || body.trim() === expectedLine;
+  } catch (err) {
+    logger.warn({ err, upstreamUrl }, "Failed to check well-known ownership file");
+    return false;
+  }
 }
 
 async function checkDnsTxt(upstreamUrl: string, token: string): Promise<boolean> {
@@ -234,7 +483,7 @@ async function checkDnsTxt(upstreamUrl: string, token: string): Promise<boolean>
   }
 }
 
-async function verifyOwnership(upstreamUrl: string, token: string): Promise<boolean> {
+export async function verifyOwnership(upstreamUrl: string, token: string): Promise<boolean> {
   const [fileOk, dnsOk] = await Promise.all([
     checkWellKnownFile(upstreamUrl, token),
     checkDnsTxt(upstreamUrl, token),
@@ -242,134 +491,134 @@ async function verifyOwnership(upstreamUrl: string, token: string): Promise<bool
   return fileOk || dnsOk;
 }
 
-function toOwnerApi(api: ApiRecord): OwnerApi {
-  const host = getUpstreamHost(api.upstreamUrl);
-  let wellKnownUrl: string;
-  try {
-    wellKnownUrl = new URL(WELL_KNOWN_PATH, api.upstreamUrl).toString();
-  } catch {
-    wellKnownUrl = `${api.upstreamUrl.replace(/\/+$/, "")}${WELL_KNOWN_PATH}`;
+export async function verifyOwnership(api: ApiRow): Promise<ApiRow> {
+  const verified = await verifyOwnership(api.upstreamUrl, api.ownershipToken);
+  const now = new Date();
+  if (verified) {
+    if (!api.ownershipVerified) {
+      const [row] = await db
+        .update(apis)
+        .set({ ownershipVerifiedAt: now, listed: true, updatedAt: now })
+        .where(eq(apis.id, api.id))
+        .returning();
+      return row;
+    }
+    return api;
   }
-  return {
-    id: api.id,
-    name: api.name,
-    description: api.description,
-    upstreamUrl: api.upstreamUrl,
-    upstreamMethod: api.upstreamMethod,
-    price: api.price,
-    pendingPriceChange: pendingPriceChangeOf(api),
-    walletAddress: api.walletAddress,
-    listed: api.listed,
-    ownershipVerified: api.ownershipVerified,
-    ownershipVerification: {
-      token: api.ownershipToken,
-      methods: ["well-known-file", "dns-txt"],
-      wellKnownFile: {
-        url: wellKnownUrl,
-        expectedLine: `${DNS_TXT_PREFIX}${api.ownershipToken}`,
-      },
-      dnsTxt: {
-        host,
-        expectedRecord: `${DNS_TXT_PREFIX}${api.ownershipToken}`,
-      },
-    },
-    createdAt: api.createdAt,
-    updatedAt: api.updatedAt,
-  };
+
+  const [row] = await db
+    .update(apis)
+    .set({ ownershipVerifiedAt: null, listed: false, updatedAt: now })
+    .where(eq(apis.id, api.id))
+    .returning();
+  return row;
+}
+
+async function recordChange(
+  apiId: string,
+  field: string,
+  oldValue: unknown,
+  newValue: unknown,
+  actor: string,
+): Promise<void> {
+  const oldMasked = maskValue(field, oldValue);
+  const newMasked = maskValue(field, newValue);
+  if (oldMasked === newMasked) {
+    return;
+  }
+  await db
+    .insert(apiCalls)
+    .values({
+      id: randomUUID(),
+      apiId,
+      field,
+      oldValue: oldMasked,
+      newValue: newMasked,
+      actor,
+      createdAt: new Date(),
+    })
+    .catch(() => {});
 }
 
 export async function createApi(input: CreateApiInput): Promise<OwnerApi> {
-  const now = new Date().toISOString();
+  const now = new Date();
   const id = randomUUID();
-  const ownershipToken = randomUUID().replace(/-/g, "");
-  const record: ApiRecord = {
-    id,
-    publisherId: input.publisherId,
-    name: input.name,
-    description: input.description ?? null,
-    upstreamUrl: input.upstreamUrl,
-    upstreamMethod: input.upstreamMethod ?? "GET",
-    upstreamHeaderValueEnc: input.upstreamHeaderValueEnc ?? null,
-    upstreamQueryValueEnc: input.upstreamQueryValueEnc ?? null,
-    price: input.price,
-    walletAddress: input.walletAddress,
-    ownershipToken,
-    ownershipVerified: false,
-    listed: false,
-    createdAt: now,
-    updatedAt: now,
-  };
+  const ownershipToken = randomBytes(16).toString("hex");
 
-  export interface CreateApiInput {
-    publisherId: string;
-    name: string;
-    description?: string;
-    upstreamUrl: string;
-    price: string;
-    priceRules?: ApiPriceRule[];
-    walletAddress: string;
-    allowedMethods: string[];
-    upstreamHeader?: { name: string; value: string };
-    upstreamQueryParam?: { name: string; value: string };
-    openapiSpec?: string | Record<string, unknown>;
-    timeoutMs?: number;
-    maxResponseBytes?: number;
-    webhook?: { url: string; secret: string };
-    healthPath?: string;
-    tags: string[];
-    payerAllowlist?: string[];
-    payerDenylist?: string[];
-    /** Issue #30: price of a time-limited access pass (undefined = passes not offered). */
-    passPrice?: string;
-    /** Issue #32: free calls per wallet per day before the paywall applies (0 = disabled). */
-    freeCallsPerDay?: number;
-  }
+  const [row] = await db
+    .insert(apis)
+    .values({
+      id,
+      publisherId: input.publisherId,
+      name: input.name,
+      description: input.description,
+      upstreamUrl: checkedUpstreamUrl(input.upstreamUrl),
+      upstreamMethod: input.upstreamMethod ?? "GET",
+      price: input.price,
+      priceRules: input.priceRules ?? [],
+      walletAddress: input.walletAddress,
+      allowedMethods: input.allowedMethods ?? ["GET"],
+      timeoutMs: clampTimeout(input.timeoutMs),
+      maxResponseBytes: checkedMaxResponseBytes(input.maxResponseBytes),
+      healthPath: input.healthPath ?? null,
+      tags: input.tags ?? [],
+      payerAllowlist: input.payerAllowlist ?? null,
+      payerDenylist: input.payerDenylist ?? [],
+      passPrice: input.passPrice ?? null,
+      freeCallsPerDay: input.freeCallsPerDay ?? 0,
+      ownershipToken,
+      ownershipVerified: false,
+      ownershipVerifiedAt: null,
+      listed: false,
+      streamingEnabled: input.streamingEnabled ?? false,
+      network: null,
+      archivedAt: null,
+      createdAt: now,
+      updatedAt: now,
+      upstreamHeaderName: null,
+      upstreamHeaderValueEnc: null,
+      upstreamQueryName: null,
+      upstreamQueryValueEnc: null,
+      openapiSpec: checkedOpenApiSpec(input.openapiSpec),
+      scheduledPrice: null,
+      effectiveAt: null,
+      ...encryptedHeader(input.upstreamHeader),
+      ...encryptedQueryParam(input.upstreamQueryParam),
+    })
+    .returning();
 
-  export async function createApi(input: CreateApiInput): Promise<ApiRow> {
-    const [row] = await db
-      .insert(apis)
-      .values({
-        publisherId: input.publisherId,
-        name: input.name,
-        description: input.description,
-        upstreamUrl: checkedUpstreamUrl(input.upstreamUrl),
-        price: input.price,
-        priceRules: input.priceRules ?? [],
-        walletAddress: input.walletAddress,
-        allowedMethods: input.allowedMethods,
-        timeoutMs: clampTimeout(input.timeoutMs),
-        maxResponseBytes: checkedMaxResponseBytes(input.maxResponseBytes),
-        healthPath: input.healthPath,
-        tags: input.tags,
-        payerAllowlist: input.payerAllowlist ?? null,
-        payerDenylist: input.payerDenylist ?? [],
-        passPrice: input.passPrice ?? null,
-        freeCallsPerDay: input.freeCallsPerDay ?? 0,
-        ownershipToken: randomBytes(16).toString("hex"),
-        openapiSpec: checkedOpenApiSpec(input.openapiSpec),
-        streamingEnabled: input.streamingEnabled ?? false,
-        ...encryptedHeader(input.upstreamHeader),
-        ...encryptedQueryParam(input.upstreamQueryParam),
-      })
+  const verified = await verifyOwnership(row.upstreamUrl, ownershipToken);
+  if (verified) {
+    const [updated] = await db
+      .update(apis)
+      .set({ ownershipVerifiedAt: now, listed: true, updatedAt: now })
+      .where(eq(apis.id, row.id))
       .returning();
-    return row;
+    return toOwnerApi(updated);
   }
 
-  return toOwnerApi(record);
+  return toOwnerApi(row);
 }
 
-export async function getApiById(id: string): Promise<ApiRecord | null> {
-  const row = await db<ApiRecord>("apis").where({ id }).first();
+export async function getApiById(id: string): Promise<ApiRow | null> {
+  const [row] = await db.select().from(apis).where(eq(apis.id, id)).limit(1);
   return row ?? null;
 }
 
-export async function getOwnerApi(id: string, publisherId: string): Promise<OwnerApi | null> {
-  const row = await db<ApiRecord>("apis").where({ id, publisherId }).first();
-  return row ? toOwnerApi(row) : null;
+export async function getOwnedApi(id: string, publisherId: string): Promise<OwnerApi | null> {
+  const api = await getApiById(id);
+  if (!api || api.publisherId !== publisherId) {
+    return null;
+  }
+  return toOwnerApi(api);
 }
 
 export async function listOwnerApis(publisherId: string): Promise<OwnerApi[]> {
-  const rows = await db<ApiRecord>("apis").where({ publisherId }).orderBy("createdAt", "desc");
+  const rows = await db
+    .select()
+    .from(apis)
+    .where(eq(apis.publisherId, publisherId))
+    .orderBy(desc(apis.createdAt));
   return rows.map(toOwnerApi);
 }
 
@@ -383,95 +632,7 @@ export async function archiveApi(api: ApiRow): Promise<ApiRow> {
   return row;
 }
 
-export interface UpdateApiInput {
-  name?: string;
-  description?: string | null;
-  upstreamUrl?: string;
-  price?: string;
-  priceRules?: ApiPriceRule[] | null;
-  walletAddress?: string;
-  allowedMethods?: string[];
-  upstreamHeader?: { name: string; value: string } | null;
-  upstreamQueryParam?: { name: string; value: string } | null;
-  openapiSpec?: string | Record<string, unknown> | null;
-  timeoutMs?: number | null;
-  maxResponseBytes?: number | null;
-  webhook?: { url: string; secret: string } | null;
-  healthPath?: string | null;
-  tags?: string[];
-  payerAllowlist?: string[] | null;
-  payerDenylist?: string[];
-  listed?: boolean;
-  /** Issue #30: null disables passes; a new price enables / reprices them. */
-  passPrice?: string | null;
-  /** Issue #32: 0 disables free calls. */
-  freeCallsPerDay?: number;
-  /** Issue #228: a future price and when it takes effect; null cancels a pending change. */
-  scheduledPrice?: string | null;
-  effectiveAt?: string | null;
-}
-
-/**
- * Issue #228: validate a scheduled price change and return the column values to
- * write. Returns {} when the update does not touch the schedule.
- * A new `price` supersedes any pending change, so the schedule is cleared with it.
- */
-export function scheduledPriceChanges(
-  api: Pick<ApiRow, "price" | "scheduledPrice" | "effectiveAt">,
-  input: Pick<UpdateApiInput, "price" | "scheduledPrice" | "effectiveAt">,
-  now: Date = new Date(),
-): { scheduledPrice: string | null; effectiveAt: Date | null } | Record<string, never> {
-  if (input.scheduledPrice === undefined && input.effectiveAt === undefined) {
-    if (input.price !== undefined && input.price !== api.price && api.scheduledPrice) {
-      return { scheduledPrice: null, effectiveAt: null };
-    }
-    return {};
-  }
-  if (input.scheduledPrice === null) {
-    return { scheduledPrice: null, effectiveAt: null };
-  }
-  if (input.scheduledPrice === undefined || input.effectiveAt === undefined || input.effectiveAt === null) {
-    throw new ApiServiceError(422, "scheduledPrice and effectiveAt must be provided together");
-  }
-  const effectiveAt = new Date(input.effectiveAt);
-  const minNoticeMs = config.PRICE_CHANGE_MIN_NOTICE_HOURS * 60 * 60 * 1000;
-  if (effectiveAt.getTime() < now.getTime() + minNoticeMs) {
-    throw new ApiServiceError(
-      422,
-      `effectiveAt must be at least ${config.PRICE_CHANGE_MIN_NOTICE_HOURS} hours from now`,
-    );
-  }
-  if (input.scheduledPrice === api.price) {
-    throw new ApiServiceError(422, "scheduledPrice must differ from the current price");
-  }
-  return { scheduledPrice: input.scheduledPrice, effectiveAt };
-}
-
-/** Issue #228: promote every scheduled price whose effective time has passed. Returns the number applied. */
-export async function applyDuePriceChanges(now: Date = new Date()): Promise<number> {
-  const due = await db
-    .update(apis)
-    .set({
-      price: sql`${apis.scheduledPrice}`,
-      scheduledPrice: null,
-      effectiveAt: null,
-    })
-    .where(
-      and(isNotNull(apis.scheduledPrice), isNotNull(apis.effectiveAt), lte(apis.effectiveAt, now)),
-    )
-    .returning({ id: apis.id });
-  return due.length;
-}
-
-/** The pending price change shown to callers and the owner, or null when none is scheduled. */
-export function pendingPriceChangeOf(api: Pick<ApiRow, "scheduledPrice" | "effectiveAt">) {
-  if (!api.scheduledPrice || !api.effectiveAt) return null;
-  return { price: api.scheduledPrice, effectiveAt: api.effectiveAt.toISOString(), currency: "USDC" as const };
-}
-
 export async function updateApi(api: ApiRow, input: UpdateApiInput): Promise<ApiRow> {
-  // Once anchored on-chain, price and payee change only through the registry
-  // so the on-chain record never drifts from what callers are charged.
   if (api.onchainStatus === "registered" || api.onchainStatus === "pending") {
     if (input.price !== undefined && input.price !== api.price) {
       throw new ApiServiceError(
@@ -503,6 +664,7 @@ export async function updateApi(api: ApiRow, input: UpdateApiInput): Promise<Api
     priceRules: input.priceRules === null ? [] : input.priceRules,
     walletAddress: input.walletAddress,
     allowedMethods: input.allowedMethods,
+    upstreamMethod: input.upstreamMethod,
     timeoutMs: clampTimeout(input.timeoutMs),
     maxResponseBytes: checkedMaxResponseBytes(input.maxResponseBytes),
     tags: input.tags,
@@ -510,6 +672,8 @@ export async function updateApi(api: ApiRow, input: UpdateApiInput): Promise<Api
     payerDenylist: input.payerDenylist,
     passPrice: input.passPrice,
     freeCallsPerDay: input.freeCallsPerDay,
+    listed: input.listed,
+    streamingEnabled: input.streamingEnabled,
     ...encryptedHeader(input.upstreamHeader),
     ...encryptedQueryParam(input.upstreamQueryParam),
   };
@@ -518,65 +682,194 @@ export async function updateApi(api: ApiRow, input: UpdateApiInput): Promise<Api
     Object.assign(changes, { healthPath: input.healthPath }, RESET_HEALTH);
   }
 
-  const updates: Partial<ApiRecord> = {};
-  const changes: Array<{ field: string; oldValue: unknown; newValue: unknown }> = [];
+  if (input.openapiSpec !== undefined) {
+    changes.openapiSpec = checkedOpenApiSpec(input.openapiSpec);
+  }
+
+  const updates: Partial<ApiRow> = {};
+  const auditChanges: Array<{ field: string; oldValue: unknown; newValue: unknown }> = [];
 
   for (const field of AUDITED_FIELDS) {
     if (!(field in input)) {
       continue;
     }
-    const newValue = input[field];
-    const oldValue = existing[field as keyof ApiRecord];
+    const newValue = (input as Record<string, unknown>)[field];
+    const oldValue = api[field as keyof ApiRow];
     if (normalizeForCompare(oldValue) !== normalizeForCompare(newValue)) {
-      updates[field as keyof ApiRecord] = newValue as never;
-      changes.push({ field, oldValue, newValue });
+      updates[field as keyof ApiRow] = newValue as never;
+      auditChanges.push({ field, oldValue, newValue });
     }
   }
 
-  if (changes.length === 0) {
-    return toOwnerApi(existing);
+  if (auditChanges.length === 0) {
+    return api;
   }
 
-  const now = new Date().toISOString();
+  const now = new Date();
   updates.updatedAt = now;
 
-  // If the upstream URL changed, ownership must be re-verified.
-  const upstreamChanged = changes.some((c) => c.field === "upstreamUrl");
+  const upstreamChanged = auditChanges.some((c) => c.field === "upstreamUrl");
   if (upstreamChanged) {
     const verified = await verifyOwnership(
-      (updates.upstreamUrl as string) ?? existing.upstreamUrl,
-      existing.ownershipToken,
+      (updates.upstreamUrl as string) ?? api.upstreamUrl,
+      api.ownershipToken,
     );
-    updates.ownershipVerified = verified;
+    updates.ownershipVerifiedAt = verified ? now : null;
     updates.listed = verified;
   }
 
-  await db("apis").where({ id }).update(updates);
+  await db.update(apis).set(updates).where(eq(apis.id, api.id));
 
-  for (const change of changes) {
-    await recordChange(id, change.field, change.oldValue, change.newValue, publisherId);
+  for (const change of auditChanges) {
+    await recordChange(api.id, change.field, change.oldValue, change.newValue, api.publisherId);
   }
 
-  const updated = await db<ApiRecord>("apis").where({ id }).first();
-  return updated ? toOwnerApi(updated) : null;
+  const [updated] = await db.select().from(apis).where(eq(apis.id, api.id)).limit(1);
+  return updated!;
 }
 
 export async function listApiChanges(apiId: string): Promise<ApiChangeRecord[]> {
-  const rows = await db<ApiChangeRecord>("api_changes")
-    .where({ apiId })
-    .orderBy("createdAt", "desc");
-  return rows;
+  const rows = await db
+    .select()
+    .from(apiCalls)
+    .where(eq(apiCalls.apiId, apiId))
+    .orderBy(desc(apiCalls.createdAt));
+  return rows as ApiChangeRecord[];
 }
 
 export async function getApiChangesForOwner(
   apiId: string,
   publisherId: string,
 ): Promise<ApiChangeRecord[] | null> {
-  const existing = await db<ApiRecord>("apis").where({ id: apiId, publisherId }).first();
-  if (!existing) {
+  const api = await getOwnedApi(apiId, publisherId);
+  if (!api) {
     return null;
   }
   return listApiChanges(apiId);
+}
+
+export async function listPublicApis(query: {
+  q?: string;
+  tags?: string[];
+  sort?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<ReturnType<typeof toPublicApi>[]> {
+  const conditions = [eq(apis.listed, true)];
+  if (query.q) {
+    conditions.push(ilike(apis.name, `%${query.q}%`));
+  }
+  if (query.tags && query.tags.length > 0) {
+    conditions.push(sql`${apis.tags} @> ${query.tags}`);
+  }
+
+  let orderBy = desc(apis.createdAt);
+  if (query.sort === "price_asc") orderBy = asc(apis.price);
+  if (query.sort === "price_desc") orderBy = desc(apis.price);
+
+  const rows = await db
+    .select()
+    .from(apis)
+    .where(and(...conditions))
+    .orderBy(orderBy)
+    .limit(query.limit ?? 50)
+    .offset(query.offset ?? 0);
+
+  return rows.map(toPublicApi);
+}
+
+export async function listPublisherApis(publisherId: string): Promise<OwnerApi[]> {
+  const rows = await db
+    .select()
+    .from(apis)
+    .where(eq(apis.publisherId, publisherId))
+    .orderBy(desc(apis.createdAt));
+  return rows.map(toOwnerApi);
+}
+
+export async function listPayerCalls(
+  payerAddress: string,
+  opts: { limit: number; offset: number },
+): Promise<{ calls: ApiRow[]; hasMore: boolean }> {
+  const rows = await db
+    .select()
+    .from(apiCalls)
+    .where(eq(apiCalls.payerAddress, payerAddress))
+    .orderBy(desc(apiCalls.createdAt))
+    .limit(opts.limit + 1)
+    .offset(opts.offset);
+
+  const hasMore = rows.length > opts.limit;
+  const calls = hasMore ? rows.slice(0, -1) : rows;
+  return { calls: calls as ApiRow[], hasMore };
+}
+
+/**
+ * The pending price change shown to callers and the owner, or null when none is scheduled.
+ */
+export function pendingPriceChangeOf(api: Pick<ApiRow, "scheduledPrice" | "effectiveAt">) {
+  if (!api.scheduledPrice || !api.effectiveAt) return null;
+  return {
+    price: api.scheduledPrice,
+    effectiveAt: api.effectiveAt.toISOString(),
+    currency: "USDC" as const,
+  };
+}
+
+/**
+ * Issue #228: validate a scheduled price change and return the column values to
+ * write. Returns {} when the update does not touch the schedule.
+ * A new `price` supersedes any pending change, so the schedule is cleared with it.
+ */
+export function scheduledPriceChanges(
+  api: Pick<ApiRow, "price" | "scheduledPrice" | "effectiveAt">,
+  input: Pick<UpdateApiInput, "price" | "scheduledPrice" | "effectiveAt">,
+  now: Date = new Date(),
+): { scheduledPrice: string | null; effectiveAt: Date | null } | Record<string, never> {
+  if (input.scheduledPrice === undefined && input.effectiveAt === undefined) {
+    if (input.price !== undefined && input.price !== api.price && api.scheduledPrice) {
+      return { scheduledPrice: null, effectiveAt: null };
+    }
+    return {};
+  }
+  if (input.scheduledPrice === null) {
+    return { scheduledPrice: null, effectiveAt: null };
+  }
+  if (
+    input.scheduledPrice === undefined ||
+    input.effectiveAt === undefined ||
+    input.effectiveAt === null
+  ) {
+    throw new ApiServiceError(422, "scheduledPrice and effectiveAt must be provided together");
+  }
+  const effectiveAt = new Date(input.effectiveAt);
+  const minNoticeMs = config.PRICE_CHANGE_MIN_NOTICE_HOURS * 60 * 60 * 1000;
+  if (effectiveAt.getTime() < now.getTime() + minNoticeMs) {
+    throw new ApiServiceError(
+      422,
+      `effectiveAt must be at least ${config.PRICE_CHANGE_MIN_NOTICE_HOURS} hours from now`,
+    );
+  }
+  if (input.scheduledPrice === api.price) {
+    throw new ApiServiceError(422, "scheduledPrice must differ from the current price");
+  }
+  return { scheduledPrice: input.scheduledPrice, effectiveAt };
+}
+
+/** Issue #228: promote every scheduled price whose effective time has passed. Returns the number applied. */
+export async function applyDuePriceChanges(now: Date = new Date()): Promise<number> {
+  const due = await db
+    .update(apis)
+    .set({
+      price: sql`${apis.scheduledPrice}`,
+      scheduledPrice: null,
+      effectiveAt: null,
+    })
+    .where(
+      and(isNotNull(apis.scheduledPrice), isNotNull(apis.effectiveAt), lte(apis.effectiveAt, now)),
+    )
+    .returning({ id: apis.id });
+  return due.length;
 }
 
 // ── Access passes (#30) ──────────────────────────────────────────────────────
@@ -815,7 +1108,6 @@ export async function getPublisherPayouts(publisherId: string, range: PayoutRang
     .groupBy(apis.walletAddress, apis.id, apis.name)
     .orderBy(apis.walletAddress, apis.name);
 
-  // Totals come from SQL numerics so they match the rows exactly (no float drift).
   const [total] = await db
     .select({
       chargedCalls: sql<number>`count(${apiCalls.id})::int`,
@@ -1007,7 +1299,7 @@ export function getApiCallRecorder(): ApiCallRecorder {
   callRecorder ??= createApiCallRecorder({
     store: postgresApiCallRecordStore(db as never),
     outbox: new FileApiCallRecordOutbox(config.API_CALL_OUTBOX_DIR),
-    logger: rootLogger,
+    logger,
     onPending: (pending) => apiCallRecordsPending.set(pending),
   });
   return callRecorder;

@@ -82,7 +82,7 @@ import {
 import { chargedCallWebhookEntry } from "../services/webhookService.js";
 import { decryptSecret } from "../utils/secretBox.js";
 import { stroopsToUsdc, usdcToStroops } from "../utils/usdc.js";
-import { getLogger } from "../lib/logger.js";
+import { logger } from "../lib/logger.js";
 import { withSpan } from "../lib/spans.js";
 import {
   gatewayChargedCalls,
@@ -93,6 +93,18 @@ import {
 import { config, upstreamKeyRing } from "../config.js";
 import { ProxyBufferSemaphore, proxyBufferConcurrency } from "../middleware/proxyBuffer.js";
 import { importBulkOpenApi, previewBulkOpenApi } from "../services/openApiImport.js";
+import { db } from "../db/client.js";
+import { apiCalls, apis as apisTable } from "../db/schema.js";
+import { eq, desc, and, gte, lt, sql } from "drizzle-orm";
+import { parsePayerFromXPayment } from "../lib/parseXPayment.js";
+import { settlementFrom } from "../lib/settlement.js";
+import {
+  withSecretQueryParam,
+  rewriteResponseHeader,
+  type UpstreamSecrets,
+} from "../lib/proxySecrets.js";
+import { minimizeCallPath } from "../lib/callPath.js";
+import { spendSignedApiCredit } from "../middleware/apiCreditSpend.js";
 
 const router = Router();
 const openApiUpload = multer({ limits: { fileSize: 512 * 1024, files: 1 } });
@@ -107,7 +119,7 @@ function apiCreditBundlePrice(api: ApiRow, calls: number): string {
 
 function sendServiceError(res: Response, err: unknown): void {
   if (err instanceof ApiServiceError) {
-    res.status(err.status).json({ error: err.message });
+    res.status(err.statusCode).json({ error: err.message });
     return;
   }
   throw err;
@@ -340,10 +352,7 @@ router.get("/apis/:id/calls.csv", apiKeyAuth, async (req, res) => {
     await writeCallsCsv(res, api.id, { from: query.data.from, to: query.data.to });
     res.end();
   } catch (err) {
-    getLogger().error(
-      { event: "api_calls_export_failed", apiId: api.id, err },
-      "CSV export failed",
-    );
+    logger.error({ event: "api_calls_export_failed", apiId: api.id, err }, "CSV export failed");
     res.destroy(err instanceof Error ? err : undefined);
   }
 });
@@ -416,7 +425,7 @@ export function buildUpstreamUrl(
 
 function decodeQueryPart(part: string): string {
   try {
-    const decoded = Buffer.from(raw, "base64").toString("utf8");
+    const decoded = Buffer.from(part, "base64").toString("utf8");
     const parsed = JSON.parse(decoded);
     if (parsed && typeof parsed === "object") {
       return {
@@ -429,7 +438,7 @@ function decodeQueryPart(part: string): string {
   } catch {
     // ignore malformed header
   }
-  return {};
+  return "";
 }
 
 /**
@@ -444,7 +453,7 @@ function resolvePayer(req: Request, res: Response): string {
   }
   const signature = req.get("PAYMENT-SIGNATURE") || req.get("X-PAYMENT") || undefined;
   const parsed = parsePayerFromXPayment(signature);
-  return parsed || "unknown";
+  return parsed.payer ?? "unknown";
 }
 
 /**
@@ -497,7 +506,7 @@ function prepareUpstreamRequest(
       upstreamKeyRing,
       config.UPSTREAM_SECRET_KEY,
     );
-    headers[api.upstreamHeaderName] = value;
+    reqHeaders[api.upstreamHeaderName] = value;
     secrets.values.push(value);
   }
   if (api.upstreamQueryName && api.upstreamQueryValueEnc && upstreamKeyRing.length > 0) {
@@ -569,7 +578,7 @@ async function proxyHandler(req: Request, res: Response) {
         : undefined,
     }).catch((err) =>
       // Only reached when the recovery spool itself could not be written (#134).
-      getLogger().error(
+      logger.error(
         { event: "api_call_record_lost", apiId: api.id, callId, err },
         "failed to record or spool API call",
       ),
@@ -591,13 +600,13 @@ async function proxyHandler(req: Request, res: Response) {
   // this handler runs. If the upstream fails before the first byte we never
   // write a 2xx status to the caller, so the caller is not charged
   // (see the "finish" listener above — charged = statusCode < 400).
-  if ("streamingEnabled" in api && api.streamingEnabled) {
+  if (api.streamingEnabled) {
     let upstream;
     try {
       upstream = await streamUpstream(upstreamOpts);
     } catch (err) {
       if (err instanceof UpstreamError) {
-        getLogger().warn(
+        logger.warn(
           {
             event: "api_upstream_stream_failed",
             apiId: api.id,
@@ -606,13 +615,11 @@ async function proxyHandler(req: Request, res: Response) {
           },
           "upstream stream failed before first byte; caller not charged",
         );
-        res
-          .status(UPSTREAM_ERROR_STATUS[err.kind])
-          .json({
-            error: "upstream_failed",
-            reason: err.kind,
-            code: UPSTREAM_ERROR_CODES[err.kind],
-          });
+        res.status(UPSTREAM_ERROR_STATUS[err.kind]).json({
+          error: "upstream_failed",
+          reason: err.kind,
+          code: UPSTREAM_ERROR_CODES[err.kind],
+        });
         return;
       }
       throw err;
@@ -635,7 +642,7 @@ async function proxyHandler(req: Request, res: Response) {
     upstream.stream.pipe(res);
 
     upstream.stream.on("error", (err) => {
-      getLogger().warn(
+      logger.warn(
         { event: "api_upstream_stream_error", apiId: api.id, error: err.message },
         "upstream stream error mid-flight",
       );
@@ -661,7 +668,7 @@ async function proxyHandler(req: Request, res: Response) {
   } catch (err) {
     gatewayUpstreamDuration.observe((performance.now() - upstreamStarted) / 1000);
     if (err instanceof UpstreamError) {
-      getLogger().warn(
+      logger.warn(
         { event: "api_upstream_failed", apiId: api.id, kind: err.kind, error: err.message },
         "upstream call failed; caller not charged",
       );
@@ -686,8 +693,7 @@ async function proxyHandler(req: Request, res: Response) {
   } satisfies StoredProxyResponse;
 
   const completeProxyIdempotency = res.locals.completeProxyIdempotency as
-    | ((response: StoredProxyResponse) => Promise<void>)
-    | undefined;
+    ((response: StoredProxyResponse) => Promise<void>) | undefined;
   if (completeProxyIdempotency && upstream.status < 400) {
     res.locals.preserveProxyIdempotencyClaim = true;
     await completeProxyIdempotency({
@@ -812,7 +818,7 @@ async function proxyIdempotency(req: Request, res: Response, next: NextFunction)
       void store
         .delete(key)
         .catch((err) =>
-          getLogger().error(
+          logger.error(
             { event: "proxy_idempotency_release_failed", apiId: api.id, err },
             "failed to release proxy idempotency claim",
           ),
@@ -922,10 +928,7 @@ router.post("/api/:id/pass", loadProxiedApi, async (req: Request, res: Response)
       message: "Pass activated",
     });
   } catch (err) {
-    getLogger().error(
-      { event: "api_pass_create_failed", apiId: api.id, err },
-      "failed to create pass",
-    );
+    logger.error({ event: "api_pass_create_failed", apiId: api.id, err }, "failed to create pass");
     res.status(500).json({ error: "Failed to create pass" });
   }
 });
