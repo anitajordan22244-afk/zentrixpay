@@ -51,10 +51,13 @@ jobs:
       - name: Run migrations
         run: pnpm db:migrate
 
+      - name: Verify migrations are idempotent (run twice)
+        run: pnpm db:migrate
+
       - name: Verify tables exist
         run: |
           set -euo pipefail
-          for table in users wallets transactions; do
+          for table in publishers apis api_calls api_passes api_credit_balances api_credit_ledger; do
             exists=$(psql "$DATABASE_URL" -tAc "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = '$table'")
             if [ "$exists" != "1" ]; then
               echo "Missing expected table: $table"
@@ -62,6 +65,29 @@ jobs:
             fi
           done
           echo "All expected tables exist."
+
+      - name: Verify key columns exist
+        run: |
+          set -euo pipefail
+          # Check apis.webhook_url
+          exists=$(psql "$DATABASE_URL" -tAc "SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'apis' AND column_name = 'webhook_url'")
+          if [ "$exists" != "1" ]; then
+            echo "Missing column: apis.webhook_url"
+            exit 1
+          fi
+          # Check apis.streaming_enabled
+          exists=$(psql "$DATABASE_URL" -tAc "SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'apis' AND column_name = 'streaming_enabled'")
+          if [ "$exists" != "1" ]; then
+            echo "Missing column: apis.streaming_enabled"
+            exit 1
+          fi
+          # Check api_calls.refund_status
+          exists=$(psql "$DATABASE_URL" -tAc "SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'api_calls' AND column_name = 'refund_status'")
+          if [ "$exists" != "1" ]; then
+            echo "Missing column: api_calls.refund_status"
+            exit 1
+          fi
+          echo "All key columns exist."
 
   # A change to server/src/db/schema.ts without a matching migration (or the
   # reverse) fails here (#189). Builds one database from the migrations and

@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { promises as dnsPromises } from "node:dns";
 import { PASS_DURATION_DEFAULT_MS, passDurationOf } from "../lib/passDuration.js";
 import {
   and,
@@ -1089,4 +1090,82 @@ export async function recordApiCall(
     ...call,
     createdAt: call.createdAt ?? new Date().toISOString(),
   });
+}
+
+// ── Ownership verification (#56, #166-#169) ──────────────────────────────────
+// A provider proves control of the upstream either by serving the
+// verification line at /.well-known/zentrixpay.txt or by publishing it as a
+// DNS TXT record on the upstream host.
+
+/** DNS TXT lookup, swappable in tests. */
+export type TxtResolver = (host: string) => Promise<string[][]>;
+
+const defaultTxtResolver: TxtResolver = (host) => dnsPromises.resolveTxt(host);
+let txtResolver: TxtResolver = defaultTxtResolver;
+
+export function setTxtResolver(resolver: TxtResolver): void {
+  txtResolver = resolver;
+}
+
+export function resetTxtResolver(): void {
+  txtResolver = defaultTxtResolver;
+}
+
+/**
+ * The well-known file must answer 200 and contain the verification line. The
+ * request goes through sendUpstream, so private/internal addresses are refused
+ * and redirects are not followed — an upstream cannot bounce the check to an
+ * internal address.
+ */
+async function checkWellKnownFile(api: ApiRow): Promise<boolean> {
+  try {
+    const res = await sendUpstream({
+      url: new URL(ownershipFileUrl(api.upstreamUrl)),
+      method: "GET",
+      headers: { accept: "text/plain", "user-agent": "ZentrixPay-Verifier/1" },
+      timeoutMs: 5_000,
+      maxResponseBytes: 64 * 1024,
+      allowPrivate: config.PROXY_ALLOW_PRIVATE_UPSTREAMS,
+    });
+    if (res.status !== 200) return false;
+    const expected = ownershipLine(api.ownershipToken);
+    return res.body
+      .toString("utf8")
+      .split(/\r?\n/)
+      .some((line) => line.trim() === expected);
+  } catch (err) {
+    logger.warn({ err, apiId: api.id }, "failed to fetch the ownership file");
+    return false;
+  }
+}
+
+async function checkDnsTxt(api: ApiRow): Promise<boolean> {
+  try {
+    const host = new URL(api.upstreamUrl).hostname;
+    const expected = ownershipLine(api.ownershipToken);
+    const records = await txtResolver(host);
+    return records.some((chunks) => chunks.join("").trim() === expected);
+  } catch (err) {
+    logger.warn({ err, apiId: api.id }, "failed to look up the ownership TXT record");
+    return false;
+  }
+}
+
+/** Verify ownership and list the API, or fail with 422 explaining both options. */
+export async function verifyOwnership(api: ApiRow): Promise<ApiRow> {
+  const [fileOk, dnsOk] = await Promise.all([checkWellKnownFile(api), checkDnsTxt(api)]);
+  if (!fileOk && !dnsOk) {
+    const line = ownershipLine(api.ownershipToken);
+    throw new ApiServiceError(
+      422,
+      `Serve "${line}" at ${ownershipFileUrl(api.upstreamUrl)}, or add it as a DNS TXT record on ${new URL(api.upstreamUrl).hostname}`,
+    );
+  }
+  const [row] = await db
+    .update(apis)
+    .set({ ownershipVerifiedAt: new Date(), listed: true })
+    .where(eq(apis.id, api.id))
+    .returning();
+  invalidateApiCache(api.id);
+  return row;
 }
