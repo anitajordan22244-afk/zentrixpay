@@ -17,7 +17,7 @@ export const network: string = config.NETWORK;
  *
  * Consumers call `.middleware(...)` on this to generate per-route paywalls.
  */
-export const sharedX402ResourceServer = (() => {
+export const sharedX402ResourceServer: x402ResourceServer = (() => {
   const facilitator = createLoggingFacilitatorClient(config.FACILITATOR_URL);
   const server = new x402ResourceServer(facilitator);
   server.register(network as Network, new ExactStellarScheme());

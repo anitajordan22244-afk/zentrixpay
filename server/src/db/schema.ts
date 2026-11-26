@@ -99,6 +99,8 @@ export const apis = pgTable(
     tags: jsonb("tags").$type<string[]>().notNull().default([]),
     // Issue #30: price callers pay for a time-limited access pass (null = passes not offered).
     passPrice: text("pass_price"),
+    // Issue #278: how long a purchased pass lasts (1 hour .. 30 days, migration 0017).
+    passDurationMs: integer("pass_duration_ms").notNull().default(3_600_000),
     // Issue #32: free calls a new wallet may make per day before the paywall kicks in (0 = disabled).
     freeCallsPerDay: integer("free_calls_per_day").notNull().default(0),
     // On-chain anchoring (migration 0018_api_gateway_extensions.sql).

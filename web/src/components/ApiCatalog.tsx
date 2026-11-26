@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { fetchApis, type PublicApi } from "../api/apis.js";
+import { fetchApis, formatPassDuration, type PublicApi } from "../api/apis.js";
 import { ErrorBanner } from "./ErrorBanner.js";
 
 export const CATALOG_PAGE_SIZE = 20;
@@ -236,6 +236,14 @@ export function ApiCatalog({ onTry, onView, onCopy }: Props) {
                     </span>
                   </span>
                 </div>
+                {api.passPrice && (
+                  <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">
+                    {t("catalog.pass_offer", {
+                      price: api.passPrice,
+                      duration: formatPassDuration(api.passDurationMs ?? 3_600_000),
+                    })}
+                  </p>
+                )}
                 {api.description && (
                   <p className="mb-3 line-clamp-3 text-sm text-gray-600 dark:text-gray-300">
                     {api.description}

@@ -6,6 +6,7 @@ import { db } from "../db/client.js";
 import { apiCalls, apis, apiPasses } from "../db/schema.js";
 import { config } from "../config.js";
 import { paymentHeader, payerFromPayment } from "../lib/payer.js";
+import { verifiedPayerFromRequest } from "../lib/payerAccessProof.js";
 import { sharedX402ResourceServer } from "../lib/x402.js";
 import { logger } from "../lib/logger.js";
 
@@ -177,6 +178,8 @@ export function resolveApiPrice(
  *  3. Active pass (#30) — payer bought a time-limited pass; skip paywall.
  *  4. Free quota (#32)  — payer is within the provider's daily free-call
  *     allowance; consume one free call and skip paywall.
+ *  Steps 1, 3 and 4 only use a wallet whose control is proven by a valid
+ *  signature (#276); see lib/payerAccessProof.ts.
  *  5. Otherwise         — fall through to the normal x402 paywall.
  */
 export async function checkPayerAccess(
@@ -191,14 +194,20 @@ export async function checkPayerAccess(
     return;
   }
 
-  // Derive the payer from the payment header (absent on the first, unanswered
-  // 402 challenge).
-  const header = paymentHeader(req);
-  const payer = payerFromPayment(header);
-  const payerAddress = payer.address;
+  // Only a wallet the caller has proven control of (a signed X-Access-*
+  // request or a signed x402 payment) can use a pass or free quota (#276).
+  // A payment header that merely names a wallet is ignored here: addresses
+  // are public, so trusting one would let anyone ride on a pass holder's pass
+  // or mint fresh free quota with made-up addresses.
+  const proof = verifiedPayerFromRequest(req, String(api.id));
+  if (!proof.ok && proof.reason === "invalid") {
+    res.status(401).json({ error: `Invalid access signature: ${proof.error}` });
+    return;
+  }
+  const payerAddress = proof.ok ? proof.address : undefined;
 
   // ── Allow / deny lists ────────────────────────────────────────────────────
-  if (payerAddress && payer.signed) {
+  if (payerAddress) {
     if (api.payerDenylist?.includes(payerAddress)) {
       res.status(403).json({ error: "This wallet is not allowed to call this API" });
       return;
@@ -243,6 +252,7 @@ export async function checkPayerAccess(
           "payer has active pass; skipping paywall",
         );
         res.locals.passId = activePass.id;
+        res.locals.accessPayer = payerAddress;
         res.locals.freeCall = false;
         next();
         return;
@@ -279,6 +289,8 @@ export async function checkPayerAccess(
           "payer within free quota; skipping paywall",
         );
         res.locals.freeCall = true;
+        // Recorded as this payer's call so it counts against the quota.
+        res.locals.accessPayer = payerAddress;
         next();
         return;
       }

@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { PASS_DURATION_MAX_MS, PASS_DURATION_MIN_MS } from "../lib/passDuration.js";
 
 export const publisherRegisterSchema = z
   .object({
@@ -165,6 +166,13 @@ const payerList = z
   .max(PAYER_LIST_MAX)
   .transform((list) => [...new Set(list)]);
 
+/** Issue #278: access pass length in milliseconds, 1 hour .. 30 days. */
+const passDurationMs = z
+  .number()
+  .int()
+  .min(PASS_DURATION_MIN_MS, "passDurationMs must be at least 1 hour (3600000)")
+  .max(PASS_DURATION_MAX_MS, "passDurationMs must be at most 30 days (2592000000)");
+
 export const createApiSchema = z
   .object({
     name: z.string().trim().min(1).max(120).pipe(displayLine),
@@ -187,6 +195,8 @@ export const createApiSchema = z
     payerDenylist: payerList.default([]),
     // Issue #30: price of a time-limited access pass (null/omit = passes not offered).
     passPrice: usdcPrice.optional(),
+    // Issue #278: how long a pass lasts, in ms (1 hour .. 30 days; default 1 hour).
+    passDurationMs: passDurationMs.optional(),
     // Issue #32: how many free calls a wallet gets per day before the paywall kicks in.
     freeCallsPerDay: z.number().int().min(0).default(0),
   })
@@ -215,6 +225,8 @@ export const updateApiSchema = z
     listed: z.boolean().optional(),
     // Issue #30: null disables passes; a new price enables / reprices them.
     passPrice: usdcPrice.nullable().optional(),
+    // Issue #278: how long a pass lasts, in ms (1 hour .. 30 days).
+    passDurationMs: passDurationMs.optional(),
     // Issue #32: 0 disables free calls.
     freeCallsPerDay: z.number().int().min(0).optional(),
     // Issue #228: schedule a price change. Both fields together; null cancels a pending change.

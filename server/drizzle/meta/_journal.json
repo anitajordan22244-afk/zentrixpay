@@ -2,30 +2,187 @@
   "version": "7",
   "dialect": "postgresql",
   "entries": [
-    { "idx": 0, "version": "7", "when": 1748000000000, "tag": "0000_unusual_klaw", "breakpoints": true },
-    { "idx": 1, "version": "7", "when": 1748100000000, "tag": "0001_supreme_raza", "breakpoints": true },
-    { "idx": 2, "version": "7", "when": 1748339196000, "tag": "0002_content_hash", "breakpoints": true },
-    { "idx": 3, "version": "7", "when": 1750000000000, "tag": "0003_striped_ultragirl", "breakpoints": true },
-    { "idx": 4, "version": "7", "when": 1750100000000, "tag": "0004_catalog_filter_sort_index", "breakpoints": true },
-    { "idx": 5, "version": "7", "when": 1750200000000, "tag": "0005_resource_payment_indexes", "breakpoints": true },
-    { "idx": 6, "version": "7", "when": 1750300000000, "tag": "0006_verification_token_usage", "breakpoints": true },
-    { "idx": 7, "version": "7", "when": 1751241600000, "tag": "0007_thumbnail_path", "breakpoints": true },
-    { "idx": 8, "version": "7", "when": 1752000000000, "tag": "0008_resource_tags", "breakpoints": true },
-    { "idx": 9, "version": "7", "when": 1753000000000, "tag": "0009_api_proxy", "breakpoints": true },
-    { "idx": 10, "version": "7", "when": 1754000000000, "tag": "0010_api_archive_tags", "breakpoints": true },
-    { "idx": 11, "version": "7", "when": 1755000000000, "tag": "0011_drop_vault_tables", "breakpoints": true },
-    { "idx": 12, "version": "7", "when": 1792411300000, "tag": "0012_api_price_rules_credits", "breakpoints": true },
-    { "idx": 13, "version": "7", "when": 1793000000000, "tag": "0013_proxy_idempotency", "breakpoints": true },
-    { "idx": 14, "version": "7", "when": 1794000000000, "tag": "0014_webhook_deliveries", "breakpoints": true },
-    { "idx": 15, "version": "7", "when": 1794500000000, "tag": "0015_price_change_notice", "breakpoints": true },
-    { "idx": 16, "version": "7", "when": 1795000000000, "tag": "0016_api_daily_rollups", "breakpoints": true },
-    { "idx": 17, "version": "7", "when": 1795500000000, "tag": "0017_webhook_secret_rotation", "breakpoints": true },
-    { "idx": 18, "version": "7", "when": 1795510000000, "tag": "0018_api_gateway_extensions", "breakpoints": true },
-    { "idx": 19, "version": "7", "when": 1795520000000, "tag": "0019_api_limits_webhooks_health", "breakpoints": true },
-    { "idx": 20, "version": "7", "when": 1795530000000, "tag": "0020_api_payer_controls", "breakpoints": true },
-    { "idx": 21, "version": "7", "when": 1795540000000, "tag": "0021_api_catalog_search_trgm", "breakpoints": true },
-    { "idx": 22, "version": "7", "when": 1795550000000, "tag": "0022_api_passes_free_quota", "breakpoints": true },
-    { "idx": 23, "version": "7", "when": 1795560000000, "tag": "0023_streaming_enabled", "breakpoints": true },
-    { "idx": 24, "version": "7", "when": 1795570000000, "tag": "0024_api_id_text_types", "breakpoints": true }
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1748000000000,
+      "tag": "0000_unusual_klaw",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1748100000000,
+      "tag": "0001_supreme_raza",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1748339196000,
+      "tag": "0002_content_hash",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1750000000000,
+      "tag": "0003_striped_ultragirl",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1750100000000,
+      "tag": "0004_catalog_filter_sort_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1750200000000,
+      "tag": "0005_resource_payment_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1750300000000,
+      "tag": "0006_verification_token_usage",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1751241600000,
+      "tag": "0007_thumbnail_path",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1752000000000,
+      "tag": "0008_resource_tags",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1753000000000,
+      "tag": "0009_api_proxy",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1754000000000,
+      "tag": "0010_api_archive_tags",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1755000000000,
+      "tag": "0011_drop_vault_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1792411300000,
+      "tag": "0012_api_price_rules_credits",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1793000000000,
+      "tag": "0013_proxy_idempotency",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1794000000000,
+      "tag": "0014_webhook_deliveries",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1794500000000,
+      "tag": "0015_price_change_notice",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1795000000000,
+      "tag": "0016_api_daily_rollups",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1795500000000,
+      "tag": "0017_webhook_secret_rotation",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1795510000000,
+      "tag": "0018_api_gateway_extensions",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1795520000000,
+      "tag": "0019_api_limits_webhooks_health",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1795530000000,
+      "tag": "0020_api_payer_controls",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1795540000000,
+      "tag": "0021_api_catalog_search_trgm",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1795550000000,
+      "tag": "0022_api_passes_free_quota",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1795560000000,
+      "tag": "0023_streaming_enabled",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1795570000000,
+      "tag": "0024_api_id_text_types",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1795670000000,
+      "tag": "0025_api_pass_duration",
+      "breakpoints": true
+    }
   ]
 }

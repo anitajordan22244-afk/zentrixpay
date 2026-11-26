@@ -58,3 +58,20 @@ The ledger enforces a unique `(API, wallet, nonce)` spend, so retries cannot
 spend the same signed request twice; concurrent distinct requests cannot reduce
 the balance below zero. Purchase references are unique to prevent a settled
 payment being credited more than once.
+
+## Using a pass or free quota
+
+An active access pass or the API's daily free-call quota is only applied to a
+wallet the caller proves it controls. A wallet address alone is public, so a
+payment header that merely names a wallet is ignored for passes and free calls.
+Prove the wallet in one of two ways:
+
+- **Signed access request:** send `X-Access-Wallet`, `X-Access-Timestamp`,
+  `X-Access-Nonce` and `X-Access-Signature`. The signed message has the same
+  fields and rules as a credit spend (above), but its first line is
+  `zentrixpay:api-access:v1`. Each nonce can be used once within the
+  clock-skew window. An invalid or replayed signature gets `401`.
+- **Signed x402 payment:** an `X-PAYMENT` / `PAYMENT-SIGNATURE` header whose
+  USDC transfer authorization is signed by the paying wallet.
+
+Without either proof, the call goes to the normal x402 paywall (`402`).

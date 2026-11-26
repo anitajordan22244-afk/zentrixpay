@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { PASS_DURATION_DEFAULT_MS, passDurationOf } from "../lib/passDuration.js";
 import {
   and,
   asc,
@@ -202,6 +203,8 @@ export function toPublicApi(api: ApiRow) {
     tags: api.tags,
     // Issue #30: callers can see whether a pass is offered and at what price.
     passPrice: api.passPrice ?? null,
+    // Issue #278: how long a pass lasts once bought.
+    passDurationMs: passDurationOf(api),
     // Issue #32: free calls per day this provider offers to new callers.
     freeCallsPerDay: api.freeCallsPerDay,
     proxyUrl: proxyUrlOf(api),
@@ -269,6 +272,8 @@ export interface CreateApiInput {
   payerDenylist?: string[];
   /** Issue #30: price of a time-limited access pass (undefined = passes not offered). */
   passPrice?: string;
+  /** Issue #278: pass length in ms (1 hour .. 30 days; default 1 hour). */
+  passDurationMs?: number;
   /** Issue #32: free calls per wallet per day before the paywall applies (0 = disabled). */
   freeCallsPerDay?: number;
   /** Issue #31: stream upstream responses (SSE/chunked) instead of buffering them. */
@@ -294,6 +299,7 @@ export async function createApi(input: CreateApiInput): Promise<ApiRow> {
       payerAllowlist: input.payerAllowlist ?? null,
       payerDenylist: input.payerDenylist ?? [],
       passPrice: input.passPrice ?? null,
+      passDurationMs: input.passDurationMs ?? PASS_DURATION_DEFAULT_MS,
       freeCallsPerDay: input.freeCallsPerDay ?? 0,
       ownershipToken: randomBytes(16).toString("hex"),
       openapiSpec: checkedOpenApiSpec(input.openapiSpec),
@@ -427,6 +433,8 @@ export interface UpdateApiInput {
   listed?: boolean;
   /** Issue #30: null disables passes; a new price enables / reprices them. */
   passPrice?: string | null;
+  /** Issue #278: pass length in ms (1 hour .. 30 days). */
+  passDurationMs?: number;
   /** Issue #32: 0 disables free calls. */
   freeCallsPerDay?: number;
   /** Issue #228: a future price and when it takes effect; null cancels a pending change. */
@@ -540,6 +548,7 @@ export async function updateApi(api: ApiRow, input: UpdateApiInput): Promise<Api
     payerAllowlist: input.payerAllowlist,
     payerDenylist: input.payerDenylist,
     passPrice: input.passPrice,
+    passDurationMs: input.passDurationMs,
     freeCallsPerDay: input.freeCallsPerDay,
     ...encryptedHeader(input.upstreamHeader),
     ...encryptedQueryParam(input.upstreamQueryParam),
@@ -617,8 +626,8 @@ export interface CreatePassInput {
   payerAddress: string;
   /** USDC amount paid for the pass. */
   amount: string;
-  /** Settlement transaction hash. */
-  txHash: string | null;
+  /** Settlement transaction hash. Required: a pass exists only for a settled payment (#275). */
+  txHash: string;
   /** Pass duration in milliseconds. */
   durationMs: number;
 }

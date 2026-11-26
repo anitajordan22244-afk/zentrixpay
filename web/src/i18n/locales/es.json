@@ -19,6 +19,7 @@
     "copy_url": "Copiar URL",
     "try_it": "Probar",
     "per_call": "/ llamada",
+    "pass_offer": "Pase: {{price}} USDC por {{duration}}",
     "copied_to_clipboard": "Copiado al portapapeles",
     "copy_this_url": "Copie esta URL:"
   },

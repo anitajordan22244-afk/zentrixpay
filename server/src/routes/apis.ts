@@ -37,9 +37,7 @@ import {
   ApiServiceError,
   archiveApi,
   createApi,
-  createApiPass,
   effectiveMaxResponseBytes,
-  getActivePass,
   getApiById,
   getApiStats,
   getApiTimeSeries,
@@ -75,6 +73,7 @@ import {
 } from "../lib/upstreamClient.js";
 import { filterRequestHeaders, filterResponseHeaders } from "../lib/proxyHeaders.js";
 import { paymentHeader, paymentHeaderHash, payerFromPayment } from "../lib/payer.js";
+import { buyAccessPass } from "./accessPassPurchase.js";
 import {
   getProxyIdempotencyStore,
   type ProxyIdempotencyKey,
@@ -740,7 +739,10 @@ async function proxyHandler(req: Request, res: Response) {
     if (charged && res.locals.creditPayer) gatewayCreditSpends.inc();
     const callId = randomUUID();
     const payerAddress =
-      (res.locals.creditPayer as string | undefined) ?? payerFrom(req, settlement);
+      (res.locals.creditPayer as string | undefined) ??
+      // Verified wallet of a pass or free-quota call (#276).
+      (res.locals.accessPayer as string | undefined) ??
+      payerFrom(req, settlement);
     const amount = (res.locals.apiCallPrice as string | undefined) ?? api.price;
     // Stored minimized: identifiers and the query string are dropped (#144).
     const path = minimizeCallPath(
@@ -904,8 +906,7 @@ async function proxyHandler(req: Request, res: Response) {
   } satisfies StoredProxyResponse;
 
   const completeProxyIdempotency = res.locals.completeProxyIdempotency as
-    | ((response: StoredProxyResponse) => Promise<void>)
-    | undefined;
+    ((response: StoredProxyResponse) => Promise<void>) | undefined;
   if (completeProxyIdempotency && upstream.status < 400) {
     res.locals.preserveProxyIdempotencyClaim = true;
     await completeProxyIdempotency({
@@ -1043,110 +1044,10 @@ async function proxyIdempotency(req: Request, res: Response, next: NextFunction)
 }
 
 // Issue #30: POST /api/:id/pass — buy a time-limited access pass via x402.
-// The caller pays passPrice once; subsequent calls are free until the pass
-// expires. Pass duration is 1 hour by default; providers may configure it via
-// the passPrice field (a future PATCH /apis/:id update can carry durationMs).
-const PASS_DURATION_MS = 60 * 60 * 1000; // 1 hour
-
-router.post("/api/:id/pass", loadProxiedApi, async (req: Request, res: Response) => {
-  const api = res.locals.api as ApiRow;
-
-  if (!api.passPrice) {
-    res.status(404).json({ error: "This API does not offer access passes" });
-    return;
-  }
-
-  // Derive the payer from the payment header.
-  const header = paymentHeader(req);
-  const { address: payerAddress } = payerFromPayment(header);
-
-  if (!payerAddress) {
-    // No payment yet — return the 402 challenge so the caller knows how much
-    // to pay. We reuse the same x402 resource-server path.
-    const network = api.network ?? "base-sepolia";
-    const payTo = api.walletAddress;
-    const price = api.passPrice;
-
-    try {
-      const resourceServer = await (
-        await import("../lib/x402.js")
-      ).sharedX402ResourceServer({
-        network,
-        payTo,
-        price,
-      });
-      const middleware = resourceServer.middleware({
-        price,
-        network,
-        payTo,
-        description: `Access pass for ${api.name} (1 hour)`,
-      });
-      middleware(req, res, () => {
-        // Settlement happened synchronously (unlikely in x402 flow but
-        // handle it by creating the pass).
-        createApiPass({
-          apiId: api.id,
-          payerAddress: payerAddress ?? "unknown",
-          amount: price,
-          txHash: null,
-          durationMs: PASS_DURATION_MS,
-        })
-          .then((pass) => {
-            if (!res.headersSent) {
-              res.status(201).json({
-                passId: pass.id,
-                expiresAt: pass.expiresAt,
-                message: "Pass activated",
-              });
-            }
-          })
-          .catch(() => {
-            if (!res.headersSent) res.status(500).json({ error: "Failed to activate pass" });
-          });
-      });
-    } catch (err) {
-      if (!res.headersSent) res.status(500).json({ error: "Failed to build payment challenge" });
-    }
-    return;
-  }
-
-  // Payment header is present: check if a pass was already active (idempotent
-  // re-purchase within the same window).
-  const existing = await getActivePass(api.id, payerAddress);
-  if (existing) {
-    res.json({
-      passId: existing.id,
-      expiresAt: existing.expiresAt,
-      message: "Pass already active",
-    });
-    return;
-  }
-
-  // Record the new pass (the x402 payment has already been validated by the
-  // middleware above on the previous request cycle; here we trust the header
-  // was settled — in production this is confirmed by the facilitator before
-  // we ever get to this handler for a valid payment).
-  try {
-    const pass = await createApiPass({
-      apiId: api.id,
-      payerAddress,
-      amount: api.passPrice,
-      txHash: null,
-      durationMs: PASS_DURATION_MS,
-    });
-    res.status(201).json({
-      passId: pass.id,
-      expiresAt: pass.expiresAt,
-      message: "Pass activated",
-    });
-  } catch (err) {
-    getLogger().error(
-      { event: "api_pass_create_failed", apiId: api.id, err },
-      "failed to create pass",
-    );
-    res.status(500).json({ error: "Failed to create pass" });
-  }
-});
+// The payment is verified and settled by the x402 facilitator before a pass is
+// created (#275); the pass length is set by the provider (#278). See
+// routes/accessPassPurchase.ts.
+router.post("/api/:id/pass", loadProxiedApi, checkPayerAllowDeny, buyAccessPass);
 
 // ANY /api/:id[/*path] — one paid call to the provider's API
 router.all(
