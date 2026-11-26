@@ -4,8 +4,8 @@
  */
 
 export interface ChargedCall {
-  id: number;
-  apiId: number;
+  id: string;
+  apiId: string;
   charged: boolean;
   settlementTx: string | null;
 }
@@ -22,8 +22,8 @@ export type MismatchKind =
 
 export interface Mismatch {
   kind: MismatchKind;
-  callId: number;
-  apiId: number;
+  callId: string;
+  apiId: string;
   settlementTx: string | null;
 }
 

@@ -1,14 +1,9 @@
-import { x402Client, wrapFetchWithPayment, decodePaymentResponseHeader } from "@x402/fetch";
-import { ExactStellarScheme } from "@x402/stellar";
+import { wrapFetchWithPayment, decodePaymentResponseHeader } from "@x402/fetch";
+import type { x402Client } from "@x402/fetch";
 import type { PaymentRequirements, PaymentResponse } from "@x402/core/types";
 import { createFreighterX402Client } from "./x402Buy.js";
 import { explorerTxUrl } from "./stellarExplorer.js";
 import { findHeader } from "./requestBody.js";
-
-/**
- * Network identifier for Stellar testnet, as expected by @x402/stellar.
- */
-export const x402Network = "stellar:testnet";
 
 /**
  * Result of an x402-paid HTTP call.
@@ -25,15 +20,10 @@ export interface X402CallResult {
 }
 
 /**
- * Build an x402 client that can pay Stellar testnet payment requirements
- * using the provided secret key.
+ * Build an x402 client that pays through the connected Freighter wallet.
  */
-export function createX402Client(secretKey: string): x402Client {
-  const client = new x402Client({
-    network: x402Network,
-    schemes: [new ExactStellarScheme({ secretKey })],
-  });
-  return client;
+export function createX402Client(walletAddress: string): x402Client {
+  return createFreighterX402Client(walletAddress);
 }
 
 /**
@@ -154,7 +144,7 @@ export async function callPaidApi(
   body: unknown;
   explorerUrl?: string;
 }> {
-  const client = createFreighterX402Client(walletAddress);
+  const client = createX402Client(walletAddress);
   const result = await x402Call(client, proxyUrl, options.path, {
     method: options.method,
     body: options.body,
@@ -172,11 +162,10 @@ export async function callPaidApi(
 }
 
 /**
- * Convenience helper: create a client from a secret key and immediately
- * perform a paid call.
+ * Convenience helper: create a Freighter-backed client and perform a paid call.
  */
-export async function x402CallWithSecret(
-  secretKey: string,
+export async function x402CallWithWallet(
+  walletAddress: string,
   baseUrl: string,
   path: string,
   options: {
@@ -186,7 +175,7 @@ export async function x402CallWithSecret(
     headers?: Record<string, string>;
   } = {},
 ): Promise<X402CallResult> {
-  const client = createX402Client(secretKey);
+  const client = createX402Client(walletAddress);
   return x402Call(client, baseUrl, path, options);
 }
 

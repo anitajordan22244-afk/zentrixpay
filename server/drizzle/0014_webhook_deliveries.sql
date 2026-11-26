@@ -1,7 +1,7 @@
 CREATE TABLE IF NOT EXISTS "webhook_deliveries" (
 	"id" serial PRIMARY KEY NOT NULL,
 	"event_id" text NOT NULL,
-	"api_id" integer NOT NULL,
+	"api_id" text NOT NULL,
 	"url" text NOT NULL,
 	"secret_enc" text NOT NULL,
 	"body" text NOT NULL,

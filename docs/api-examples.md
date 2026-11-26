@@ -80,8 +80,22 @@ curl -s $BASE/publishers/me/analytics -H "x-api-key: $API_KEY" | jq .
     "currency": "USDC"
   },
   "apis": [
-    { "id": "api-1", "name": "Weather", "archivedAt": null, "calls": 10, "chargedCalls": 8, "revenue": "0.8" },
-    { "id": "api-2", "name": "Quotes", "archivedAt": null, "calls": 5, "chargedCalls": 4, "revenue": "0.4" }
+    {
+      "id": "api-1",
+      "name": "Weather",
+      "archivedAt": null,
+      "calls": 10,
+      "chargedCalls": 8,
+      "revenue": "0.8"
+    },
+    {
+      "id": "api-2",
+      "name": "Quotes",
+      "archivedAt": null,
+      "calls": 5,
+      "chargedCalls": 4,
+      "revenue": "0.4"
+    }
   ]
 }
 ```
@@ -170,6 +184,14 @@ Every call goes through the proxy at `/api/:id/<path>`:
 ```bash
 curl -i $BASE/api/$API_ID/current?city=Lagos
 ```
+
+#### Proxy path requirements and boundary validation
+
+The proxy path appended after `/api/:id` must remain strictly within the provider's configured upstream boundary:
+
+- Traversal sequences (`..`, `.`, `%2e`, `%252e`), path separator smuggling (`/`, `\`, `%2f`, `%5c`), and null bytes (`\0`, `%00`) are strictly forbidden.
+- Any attempt to escape the API's configured upstream origin or base path is rejected with `400 Bad Request` and error code `invalid_path`.
+- Traversal attempts are blocked before request buffering, before upstream forwarding, and before any payment is deducted or charged.
 
 Without payment the gateway answers `402 Payment Required` with the price and payee in the `PAYMENT-REQUIRED` header. Use an x402 client to pay and retry automatically — see [Calling ZentrixPay APIs from JavaScript](call-from-javascript.md).
 

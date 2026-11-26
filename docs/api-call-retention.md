@@ -4,6 +4,9 @@ Every call through the pay-per-call proxy (`/api/:id/*`) writes one row to
 `api_calls`. These rows feed provider stats, the recent-calls view, payer
 history, popularity ranking, refunds and webhooks. They also describe who
 called what, so ZentrixPay keeps as little as it can, for a bounded time.
+The row stores only identifiers, payer/charge/settlement data, the minimized
+route, response/timing data, refund state and its creation time; webhook
+delivery details are stored separately in `webhook_deliveries`.
 
 ## What is stored
 

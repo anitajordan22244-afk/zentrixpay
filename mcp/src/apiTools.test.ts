@@ -86,6 +86,23 @@ describe("zentrixpay_call", () => {
     expect(await handle("zentrixpay_call", { apiId: "api1" })).toBe("Insufficient USDC");
     expect(paid).not.toHaveBeenCalled();
   });
+
+  it("rejects path traversal, backslashes, and null bytes before calling or paying (#130)", async () => {
+    const { handle, paid } = setup();
+    await expect(handle("zentrixpay_call", { apiId: "api1", path: "../admin" })).rejects.toThrow(
+      /Invalid path/,
+    );
+    await expect(
+      handle("zentrixpay_call", { apiId: "api1", path: "/items/%2e%2e/admin" }),
+    ).rejects.toThrow(/Invalid path/);
+    await expect(
+      handle("zentrixpay_call", { apiId: "api1", path: "items\\admin" }),
+    ).rejects.toThrow(/Invalid path/);
+    await expect(
+      handle("zentrixpay_call", { apiId: "api1", path: "/items\0null" }),
+    ).rejects.toThrow(/Invalid path/);
+    expect(paid).not.toHaveBeenCalled();
+  });
 });
 
 describe("provider tools", () => {

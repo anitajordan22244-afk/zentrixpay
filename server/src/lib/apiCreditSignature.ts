@@ -33,6 +33,14 @@ export function sep53MessageDigest(message: Buffer): Buffer {
 export const API_CREDIT_SPEND_MESSAGE_TAG = "zentrixpay:api-credit-spend:v2";
 
 /**
+ * Tag of the signed access message (#276). Same fields and signing rules as a
+ * credit spend, but a different tag, so a signature proving wallet control for
+ * a pass or free-quota call can never be replayed as a credit spend (or vice
+ * versa).
+ */
+export const API_ACCESS_MESSAGE_TAG = "zentrixpay:api-access:v1";
+
+/**
  * Canonical form of a request query string: parameters sorted by name then
  * value, re-encoded, without the leading "?". Reordered parameters therefore
  * sign the same, while any change to a name or value changes the signature.
@@ -59,12 +67,14 @@ export function buildApiCreditSpendMessage(input: {
   timestamp: string;
   nonce: string;
   bodyHash: string;
+  /** Message tag; defaults to the credit-spend tag. */
+  tag?: string;
 }): string {
   const queryIndex = input.path.indexOf("?");
   const pathname = queryIndex === -1 ? input.path : input.path.slice(0, queryIndex);
   const query = queryIndex === -1 ? "" : canonicalQueryString(input.path.slice(queryIndex + 1));
   return [
-    API_CREDIT_SPEND_MESSAGE_TAG,
+    input.tag ?? API_CREDIT_SPEND_MESSAGE_TAG,
     input.walletAddress,
     input.apiId,
     input.method.toUpperCase(),
@@ -95,6 +105,8 @@ export function verifyApiCreditSpendSignature(input: {
   signature: string;
   nowMs: number;
   maxSkewMs: number;
+  /** Message tag; defaults to the credit-spend tag. */
+  tag?: string;
 }): { ok: true } | { ok: false; error: ApiCreditSignatureError } {
   let keypair: Keypair;
   try {

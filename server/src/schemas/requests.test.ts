@@ -116,3 +116,56 @@ describe("apiStatsQuerySchema (#143)", () => {
     }
   });
 });
+
+describe("display text safety (#215)", () => {
+  const withName = (name: string) => createApiSchema.safeParse({ ...createInput, name });
+
+  it("rejects each unsafe character class in names", () => {
+    const bad = {
+      "C0 control (BEL)": "Weather\u0007",
+      "C1 control": "Weather\u0085",
+      DEL: "Weather\u007F",
+      "bidi override (RLO)": "Weather‮gnp.exe",
+      "bidi isolate": "Weather⁦x",
+      "zero-width space": "Wea​ther",
+      "zero-width joiner": "Wea‍ther",
+      "word joiner": "Wea⁠ther",
+      "byte order mark inside": "Wea\uFEFFther",
+      "arabic letter mark": "Weather؜",
+    };
+    for (const [label, name] of Object.entries(bad)) {
+      expect(withName(name).success, label).toBe(false);
+    }
+  });
+
+  it("rejects the same classes in tags", () => {
+    expect(createApiSchema.safeParse({ ...createInput, tags: ["fin‮ance"] }).success).toBe(false);
+    expect(createApiSchema.safeParse({ ...createInput, tags: ["fi​nance"] }).success).toBe(false);
+    expect(createApiSchema.safeParse({ ...createInput, tags: ["finance"] }).success).toBe(true);
+  });
+
+  it("rejects unsafe characters in descriptions but allows line breaks and tabs", () => {
+    expect(
+      createApiSchema.safeParse({ ...createInput, description: "Line one\nLine\ttwo\r\n" }).success,
+    ).toBe(true);
+    expect(
+      createApiSchema.safeParse({ ...createInput, description: "Hidden\u0000null" }).success,
+    ).toBe(false);
+    expect(
+      createApiSchema.safeParse({ ...createInput, description: "Override‪text" }).success,
+    ).toBe(false);
+  });
+
+  it("applies the same rules on update", () => {
+    expect(updateApiSchema.safeParse({ name: "Ok‮" }).success).toBe(false);
+    expect(updateApiSchema.safeParse({ description: "ok​" }).success).toBe(false);
+    expect(updateApiSchema.safeParse({ name: "Ok name" }).success).toBe(true);
+  });
+
+  it("normalizes names to NFC and keeps ordinary Unicode text", () => {
+    const decomposed = withName("Café Amélie");
+    expect(decomposed.success).toBe(true);
+    if (decomposed.success) expect(decomposed.data.name).toBe("Café Amélie");
+    expect(withName("天気 API 🌤").success).toBe(true);
+  });
+});

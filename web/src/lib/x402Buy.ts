@@ -117,6 +117,10 @@ export function expectedNetworkPassphrase(): string {
   return resolveNetworkPreset().networkPassphrase;
 }
 
+export function expectedX402Network(): Network {
+  return resolveNetworkPreset().x402Network;
+}
+
 /** Map common purchase failures to actionable guidance. */
 function describeFailure(status: number, detail?: string): string {
   if (status === 402) {

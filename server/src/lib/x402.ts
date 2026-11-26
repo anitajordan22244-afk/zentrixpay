@@ -1,5 +1,6 @@
 import { x402ResourceServer } from "@x402/core/server";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
+import type { Network } from "@x402/core/types";
 import { config } from "../config.js";
 import { createLoggingFacilitatorClient } from "./loggingFacilitator.js";
 
@@ -16,9 +17,9 @@ export const network: string = config.NETWORK;
  *
  * Consumers call `.middleware(...)` on this to generate per-route paywalls.
  */
-export const sharedX402ResourceServer = (() => {
+export const sharedX402ResourceServer: x402ResourceServer = (() => {
   const facilitator = createLoggingFacilitatorClient(config.FACILITATOR_URL);
-  const server = x402ResourceServer(facilitator);
-  server.register(new ExactStellarScheme(network));
+  const server = new x402ResourceServer(facilitator);
+  server.register(network as Network, new ExactStellarScheme());
   return server;
 })();

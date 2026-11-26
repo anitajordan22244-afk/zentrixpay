@@ -15,7 +15,7 @@ export interface ImportDefaults {
 export interface ImportResult {
   imported: Array<{
     group: string;
-    apiId: number;
+    apiId: string;
     name: string;
     operations: number;
     idempotent: boolean;

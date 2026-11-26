@@ -187,12 +187,14 @@ Call zentrixpay_api_info with {"id": "api_weather_current"}.
 | ----------------- | ------- | -------- | -------------------------------------------------------------------------- |
 | `id`              | string  | yes      | API id from `zentrixpay_list_apis`.                                        |
 | `method`          | string  | no       | HTTP method; defaults to the API's first supported method.                 |
-| `path`            | string  | no       | Path appended to the API's `baseUrl`.                                      |
+| `path`            | string  | no       | Path appended to the API's `baseUrl`. Must remain within the API boundary. |
 | `query`           | object  | no       | Query-string parameters.                                                   |
 | `body`            | object  | no       | JSON request body (for `POST`/`PUT`/`PATCH`).                              |
 | `headers`         | object  | no       | Extra request headers.                                                     |
 | `maxPricePerCall` | integer | no       | Safety ceiling. The call is refused if the API's price exceeds this value. |
 | `confirmMainnet`  | boolean | no       | Must be `true` to spend real funds on mainnet.                             |
+
+> **Path validation note:** Caller-supplied `path` values must be relative and remain strictly within the API's configured endpoint boundary. Traversal attempts (such as `..`, `%2e`), backslashes, and null bytes are rejected on the client before making any network request or spending any funds.
 
 ### 3.1 A simple GET
 

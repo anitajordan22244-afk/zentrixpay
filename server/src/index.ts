@@ -8,7 +8,13 @@ import { config } from "./config.js";
 import { initSentry, captureServerException } from "./lib/sentry.js";
 import { createApp } from "./app.js";
 import { rootLogger } from "./lib/logger.js";
-import { beginShutdown, whenDrained, inFlightCount } from "./lib/lifecycle.js";
+import {
+  beginShutdown,
+  whenDrained,
+  whenProxyCallsSettled,
+  inFlightCount,
+  proxyCallCount,
+} from "./lib/lifecycle.js";
 import { pgClient } from "./db/client.js";
 import { startPoolMetrics, stopPoolMetrics } from "./db/client.js";
 import { startHealthCheckWorker, stopHealthCheckWorker } from "./workers/healthCheckWorker.js";
@@ -90,12 +96,15 @@ async function gracefulShutdown(signal: string): Promise<void> {
     }, config.GRACEFUL_SHUTDOWN_TIMEOUT_MS);
   });
 
-  await Promise.race([whenDrained(), deadline]);
+  // Paid calls must finish settling before the pool closes, so wait for them
+  // under the same bound as ordinary requests (issue #216).
+  await Promise.race([Promise.all([whenDrained(), whenProxyCallsSettled()]), deadline]);
   clearTimeout(drainTimer!);
 
-  if (timedOut && inFlightCount() > 0) {
+  const stillRunning = inFlightCount() > 0 || proxyCallCount() > 0;
+  if (timedOut && stillRunning) {
     rootLogger.warn(
-      { event: "shutdown_drain_timeout", inFlight: inFlightCount() },
+      { event: "shutdown_drain_timeout", inFlight: inFlightCount(), proxyCalls: proxyCallCount() },
       "drain timed out with requests still in flight; forcing close",
     );
   }
@@ -103,7 +112,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
   try {
     await closeRateLimitStore();
     await pgClient.end({ timeout: 5 });
-    const forced = timedOut && inFlightCount() > 0;
+    const forced = timedOut && stillRunning;
     rootLogger.info({ event: "shutdown_complete", signal, forced }, "graceful shutdown complete");
     process.exit(forced ? 1 : 0);
   } catch (err) {

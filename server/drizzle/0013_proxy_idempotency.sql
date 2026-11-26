@@ -1,5 +1,5 @@
 CREATE TABLE "proxy_idempotency" (
-	"api_id" integer NOT NULL,
+	"api_id" text NOT NULL,
 	"payer" text NOT NULL,
 	"idempotency_key" text NOT NULL,
 	"fingerprint" text NOT NULL,

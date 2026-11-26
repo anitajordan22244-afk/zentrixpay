@@ -18,10 +18,10 @@ const rows = await db
     id: apiCalls.id,
     apiId: apiCalls.apiId,
     charged: apiCalls.charged,
-    settlementTx: apiCalls.settlementTx,
+    settlementTx: apiCalls.txHash,
   })
   .from(apiCalls)
-  .where(or(eq(apiCalls.charged, true), isNotNull(apiCalls.settlementTx)));
+  .where(or(eq(apiCalls.charged, true), isNotNull(apiCalls.txHash)));
 
 const mismatches = await reconcileCalls(rows, horizonLookup(horizon));
 for (const m of mismatches) {

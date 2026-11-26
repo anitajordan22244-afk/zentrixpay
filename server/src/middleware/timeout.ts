@@ -1,12 +1,12 @@
-import type { NextFunction, Request, Response } from "express";
+import type { RequestHandler } from "express";
 import { getLogger } from "../lib/logger.js";
 
 // Per-request timeout (issue #113). When a slow upstream (RPC, facilitator,
 // storage) keeps a request open past the limit, respond 503 instead of letting
 // the connection hang. The timer is cleared once the response finishes (or the
 // client disconnects) so completed requests never trip it.
-export function requestTimeout(ms: number) {
-  return (req: Request, res: Response, next: NextFunction): void => {
+export function requestTimeout(ms: number): RequestHandler {
+  return (req, res, next) => {
     const timer = setTimeout(() => {
       // Headers may already be on the wire (e.g. a streamed download in
       // progress) — don't try to rewrite the response in that case.

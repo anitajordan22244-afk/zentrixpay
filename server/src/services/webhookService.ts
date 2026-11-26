@@ -43,7 +43,7 @@ export interface ChargedCallEvent {
 /** An outbox row's delivery inputs; the secret stays encrypted until delivery. */
 export interface WebhookOutboxEntry {
   eventId: string;
-  apiId: number;
+  apiId: string;
   url: string;
   secretEnc: string;
   body: string;
@@ -274,7 +274,7 @@ interface StoredDelivery extends WebhookDeliveryView {
 }
 
 // In memory, like the deliveries themselves (see the header comment).
-const deliveryLog = new Map<number, StoredDelivery[]>();
+const deliveryLog = new Map<string, StoredDelivery[]>();
 
 function toView({ body: _body, ...view }: StoredDelivery): WebhookDeliveryView {
   return view;
@@ -288,11 +288,11 @@ export function webhookUnavailableReason(api: ApiRow): string | null {
 }
 
 /** The owner's recent deliveries for an API, newest first. */
-export function listWebhookDeliveries(apiId: number): WebhookDeliveryView[] {
+export function listWebhookDeliveries(apiId: string): WebhookDeliveryView[] {
   return (deliveryLog.get(apiId) ?? []).map(toView);
 }
 
-function storeDelivery(apiId: number, delivery: StoredDelivery): void {
+function storeDelivery(apiId: string, delivery: StoredDelivery): void {
   const list = deliveryLog.get(apiId) ?? [];
   list.unshift(delivery);
   if (list.length > WEBHOOK_LOG_LIMIT) list.length = WEBHOOK_LOG_LIMIT;

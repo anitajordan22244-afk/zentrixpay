@@ -510,7 +510,36 @@ export function createApiToolHandler(
       );
     }
 
-    const path = (str(args, "path") ?? "").replace(/^\/+/, "");
+    const rawPath = str(args, "path") ?? "";
+    if (rawPath) {
+      const segments = rawPath.replace(/^\/+/, "").split("/").filter(Boolean);
+      for (const s of segments) {
+        let decoded = s;
+        try {
+          decoded = decodeURIComponent(s);
+        } catch {
+          throw new Error(`Invalid path "${rawPath}": malformed percent-encoding`);
+        }
+        if (
+          s === "." ||
+          s === ".." ||
+          decoded === "." ||
+          decoded === ".." ||
+          s.includes("\\") ||
+          decoded.includes("\\") ||
+          s.includes("\0") ||
+          decoded.includes("\0") ||
+          /%2e/i.test(s) ||
+          /%252e/i.test(s)
+        ) {
+          throw new Error(
+            `Invalid path "${rawPath}": path traversal and separator smuggling are not permitted`,
+          );
+        }
+      }
+    }
+
+    const path = rawPath.replace(/^\/+/, "");
     const url = new URL(`${api.proxyUrl}${path ? `/${path}` : ""}`);
     for (const [k, v] of Object.entries(stringMap(args, "query"))) url.searchParams.append(k, v);
 

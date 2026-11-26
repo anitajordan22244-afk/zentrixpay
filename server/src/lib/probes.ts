@@ -100,8 +100,14 @@ export async function probeFacilitator(
       signal: controller.signal,
     });
     if (!res.ok) throw new Error(`facilitator /supported returned HTTP ${res.status}`);
-    const body = (await res.json().catch(() => null)) as { kinds?: unknown[] } | null;
-    const kinds = Array.isArray(body?.kinds) ? body.kinds.length : undefined;
+    const body: unknown = await res.json().catch(() => null);
+    const kinds =
+      typeof body === "object" &&
+      body !== null &&
+      "kinds" in body &&
+      Array.isArray(body.kinds)
+        ? body.kinds.length
+        : undefined;
     return {
       status: "ok",
       latencyMs: Date.now() - start,

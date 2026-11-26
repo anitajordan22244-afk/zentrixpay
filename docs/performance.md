@@ -152,7 +152,7 @@ Latency values are in milliseconds; requests/sec is the mean over the run.
 `name ILIKE '%term%' OR description ILIKE '%term%'`, ordered by
 `created_at DESC, id ASC` with `LIMIT`/`OFFSET` (#148). A btree index cannot
 serve a pattern with a leading wildcard, so before migration
-`0011_api_catalog_search_trgm.sql` every search for a rare or missing term read
+`0021_api_catalog_search_trgm.sql` every search for a rare or missing term read
 the whole `apis` table.
 
 The migration enables `pg_trgm` and adds GIN trigram indexes on `apis.name`

@@ -71,7 +71,7 @@ export function usdcToStroops(usdc: string): bigint {
  * Returns the transaction XDR string.
  */
 export async function setPrice(id: string, newPriceUsdc: string): Promise<string> {
-  const tx = await (registryClient as any).set_price(
+  const tx = await registryClient.set_price(
     { id, new_price: usdcToStroops(newPriceUsdc) },
     { simulate: false },
   );
@@ -83,7 +83,7 @@ export async function setPrice(id: string, newPriceUsdc: string): Promise<string
  * Returns the transaction XDR string.
  */
 export async function transferOwnership(id: string, newCreator: string): Promise<string> {
-  const tx = await (registryClient as any).transfer_ownership(
+  const tx = await registryClient.transfer_ownership(
     { id, new_creator: newCreator },
     { simulate: false },
   );
@@ -100,7 +100,7 @@ export async function buildRegisterTx(
   priceUsdc: string,
   metadata: string,
 ): Promise<string> {
-  const tx = await (registryClient as any).register(
+  const tx = await registryClient.register(
     {
       creator,
       id,
@@ -131,7 +131,7 @@ export async function delistOnChain(id: string): Promise<{
   error?: string;
 }> {
   try {
-    const tx = await (registryClient as any).delist({ id }, { simulate: true });
+    const tx = await registryClient.delist({ id }, { simulate: true });
 
     const sentTx = await tx.signAndSend({
       signTransaction: async (xdr: string) => {

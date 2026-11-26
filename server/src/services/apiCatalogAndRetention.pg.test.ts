@@ -122,7 +122,7 @@ describePg("API catalog and call records (real Postgres)", () => {
     });
     await sql.unsafe(`CREATE SCHEMA ${schemaName}`);
     await sql.unsafe(TABLES_SQL);
-    for (const statement of migration("0011_api_catalog_search_trgm.sql").split(
+    for (const statement of migration("0021_api_catalog_search_trgm.sql").split(
       "--> statement-breakpoint",
     )) {
       await sql.unsafe(statement);

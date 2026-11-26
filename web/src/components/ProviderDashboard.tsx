@@ -14,6 +14,9 @@ import {
   type ApiStats,
   type HttpMethod,
   type OwnerApi,
+  PASS_DURATION_MAX_HOURS,
+  PASS_DURATION_MIN_HOURS,
+  formatPassDuration,
 } from "../api/apis.js";
 import { useAsync } from "../hooks/useAsync.js";
 import type { WalletState } from "../hooks/useWalletConnection.js";
@@ -754,6 +757,14 @@ function ApiCard({
   const [error, setError] = useState<string | null>(null);
   const [price, setPrice] = useState(api.price);
   const [stats, setStats] = useState<ApiStats | null>(null);
+  // Issue #278: pass length is edited in hours; the API stores milliseconds.
+  const savedPassHours = Math.round((api.passDurationMs ?? 3_600_000) / 3_600_000);
+  const [passHours, setPassHours] = useState(String(savedPassHours));
+  const passHoursValue = Number(passHours);
+  const passHoursValid =
+    Number.isInteger(passHoursValue) &&
+    passHoursValue >= PASS_DURATION_MIN_HOURS &&
+    passHoursValue <= PASS_DURATION_MAX_HOURS;
 
   async function run(label: string, action: () => Promise<OwnerApi | void>) {
     setBusy(label);
@@ -851,6 +862,48 @@ function ApiCard({
         >
           {busy === "Save price" ? "Saving…" : "Save price"}
         </button>
+        {api.passPrice && (
+          <>
+            <div>
+              <label
+                htmlFor={`pass-hours-${api.id}`}
+                className="mb-1 block text-xs text-gray-500 dark:text-gray-400"
+              >
+                Pass duration (hours, 1–720)
+              </label>
+              <input
+                id={`pass-hours-${api.id}`}
+                type="number"
+                min={PASS_DURATION_MIN_HOURS}
+                max={PASS_DURATION_MAX_HOURS}
+                step={1}
+                value={passHours}
+                onChange={(e) => setPassHours(e.target.value)}
+                aria-describedby={`pass-hours-hint-${api.id}`}
+                className={`${inputClass} w-28`}
+              />
+              <p
+                id={`pass-hours-hint-${api.id}`}
+                className="mt-1 text-xs text-gray-500 dark:text-gray-400"
+              >
+                {passHoursValid
+                  ? `Pass for ${api.passPrice} USDC lasts ${formatPassDuration(passHoursValue * 3_600_000)}`
+                  : "Between 1 hour and 30 days"}
+              </p>
+            </div>
+            <button
+              className={secondaryButton}
+              disabled={busy !== null || !passHoursValid || passHoursValue === savedPassHours}
+              onClick={() =>
+                run("Save pass", () =>
+                  updateApi(apiKey, api.id, { passDurationMs: passHoursValue * 3_600_000 }),
+                )
+              }
+            >
+              {busy === "Save pass" ? "Saving…" : "Save pass duration"}
+            </button>
+          </>
+        )}
         {api.ownershipVerified && (
           <button
             className={secondaryButton}
@@ -928,17 +981,30 @@ function PayoutsPanel({ apiKey }: { apiKey: string }) {
   return (
     <section aria-labelledby="payouts-heading" className="flex flex-col gap-3">
       <div className="flex flex-wrap items-end justify-between gap-2">
-        <h3 id="payouts-heading" className="text-base font-semibold text-gray-900 dark:text-gray-100">
+        <h3
+          id="payouts-heading"
+          className="text-base font-semibold text-gray-900 dark:text-gray-100"
+        >
           Payouts by wallet
         </h3>
         <div className="flex flex-wrap items-end gap-2 text-xs">
           <label className="flex flex-col gap-1">
             From
-            <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="rounded border px-2 py-1" />
+            <input
+              type="date"
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+              className="rounded border px-2 py-1"
+            />
           </label>
           <label className="flex flex-col gap-1">
             To
-            <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="rounded border px-2 py-1" />
+            <input
+              type="date"
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+              className="rounded border px-2 py-1"
+            />
           </label>
           <button
             className={secondaryButton}
@@ -965,10 +1031,18 @@ function PayoutsPanel({ apiKey }: { apiKey: string }) {
           <table className="w-full text-left text-xs">
             <thead>
               <tr>
-                <th scope="col" className="px-2 py-1">Payee wallet</th>
-                <th scope="col" className="px-2 py-1">API</th>
-                <th scope="col" className="px-2 py-1 text-right">Charged calls</th>
-                <th scope="col" className="px-2 py-1 text-right">Revenue (USDC)</th>
+                <th scope="col" className="px-2 py-1">
+                  Payee wallet
+                </th>
+                <th scope="col" className="px-2 py-1">
+                  API
+                </th>
+                <th scope="col" className="px-2 py-1 text-right">
+                  Charged calls
+                </th>
+                <th scope="col" className="px-2 py-1 text-right">
+                  Revenue (USDC)
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -982,13 +1056,17 @@ function PayoutsPanel({ apiKey }: { apiKey: string }) {
               ))}
               {summary.rows.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="px-2 py-3 text-center text-gray-500">No charged calls in this period.</td>
+                  <td colSpan={4} className="px-2 py-3 text-center text-gray-500">
+                    No charged calls in this period.
+                  </td>
                 </tr>
               )}
             </tbody>
             <tfoot>
               <tr className="border-t font-semibold">
-                <td className="px-2 py-1" colSpan={2}>Total</td>
+                <td className="px-2 py-1" colSpan={2}>
+                  Total
+                </td>
                 <td className="px-2 py-1 text-right">{summary.totals.chargedCalls}</td>
                 <td className="px-2 py-1 text-right">{summary.totals.revenue}</td>
               </tr>

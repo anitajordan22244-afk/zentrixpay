@@ -2,7 +2,7 @@
 --
 -- Seeds a throwaway `bench_apis` table with a representative catalog and prints the
 -- query plan of the exact query `listPublicApis` runs, with and without the
--- pg_trgm indexes from drizzle/0011_api_catalog_search_trgm.sql.
+-- pg_trgm indexes from drizzle/0021_api_catalog_search_trgm.sql.
 --
 -- Run it against a scratch database only (it drops and recreates `bench_apis`
 -- and installs the pg_trgm extension):

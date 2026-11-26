@@ -11,14 +11,12 @@ export const CALLS_CSV_HEADER = [
   "created_at",
   "method",
   "path",
-  "status_code",
+  "response_status",
   "charged",
   "amount",
-  "asset",
-  "payer",
-  "settlement_tx",
-  "latency_ms",
-  "error",
+  "payer_address",
+  "tx_hash",
+  "duration_ms",
 ] as const;
 
 type CallRow = typeof apiCalls.$inferSelect;
@@ -36,14 +34,12 @@ export function callToCsvLine(call: CallRow): string {
     call.createdAt,
     call.method,
     call.path,
-    call.statusCode,
+    call.responseStatus,
     call.charged,
     call.amount,
-    call.asset,
-    call.payer,
-    call.settlementTx,
-    call.latencyMs,
-    call.error,
+    call.payerAddress,
+    call.txHash,
+    call.durationMs,
   ]
     .map(csvCell)
     .join(",");
@@ -54,11 +50,11 @@ export function callToCsvLine(call: CallRow): string {
  * keyset pagination so the full range is never held in memory.
  */
 export async function* iterateApiCalls(
-  apiId: number | string,
+  apiId: string,
   range: StatsRange = {},
   batchSize = CALLS_EXPORT_BATCH_SIZE,
 ): AsyncGenerator<CallRow> {
-  let lastId = 0;
+  let lastId = "";
   for (;;) {
     const batch = await db
       .select()
@@ -84,7 +80,7 @@ export interface CsvSink {
  */
 export async function writeCallsCsv(
   sink: CsvSink,
-  apiId: number | string,
+  apiId: string,
   range: StatsRange = {},
 ): Promise<number> {
   let rows = 0;

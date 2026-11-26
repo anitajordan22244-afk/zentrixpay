@@ -2,6 +2,7 @@ import {
   check,
   pgEnum,
   pgTable,
+  serial,
   text,
   timestamp,
   integer,
@@ -9,6 +10,7 @@ import {
   jsonb,
   index,
   uniqueIndex,
+  serial,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { createId } from "@paralleldrive/cuid2";
@@ -42,6 +44,7 @@ export const publishers = pgTable("publishers", {
 export const apis = pgTable(
   "apis",
   {
+    // CUID text IDs preserve existing rows and are the public /api/:id identifier.
     id: text("id")
       .primaryKey()
       .$defaultFn(() => createId()),
@@ -96,12 +99,14 @@ export const apis = pgTable(
     tags: jsonb("tags").$type<string[]>().notNull().default([]),
     // Issue #30: price callers pay for a time-limited access pass (null = passes not offered).
     passPrice: text("pass_price"),
+    // Issue #278: how long a purchased pass lasts (1 hour .. 30 days, migration 0017).
+    passDurationMs: integer("pass_duration_ms").notNull().default(3_600_000),
     // Issue #32: free calls a new wallet may make per day before the paywall kicks in (0 = disabled).
     freeCallsPerDay: integer("free_calls_per_day").notNull().default(0),
-    // On-chain anchoring (migrations 0010_api_gateway_extensions.sql).
+    // On-chain anchoring (migration 0018_api_gateway_extensions.sql).
     onchainStatus: onchainStatusEnum("onchain_status").notNull().default("none"),
     onchainTxHash: text("onchain_tx_hash"),
-    // Streaming proxy support (migration 0011_streaming_enabled.sql).
+    // Streaming proxy support (migration 0023_streaming_enabled.sql).
     streamingEnabled: boolean("streaming_enabled").notNull().default(false),
     // Per-API network override (falls back to server config.NETWORK when null).
     network: text("network"),
@@ -182,37 +187,32 @@ export const apiCalls = pgTable(
       .$defaultFn(() => createId()),
     apiId: text("api_id")
       .notNull()
-      .references(() => apis.id, { onDelete: "cascade" }),
+      .references(() => apis.id),
     payerAddress: text("payer_address").notNull(),
     amount: text("amount").notNull(),
-    charged: boolean("charged").notNull().default(false),
+    charged: boolean("charged").notNull(),
     method: text("method").notNull(),
     path: text("path").notNull(),
-    responseStatus: integer("response_status"),
-    statusCode: integer("status_code"),
-    durationMs: integer("duration_ms"),
-    latencyMs: integer("latency_ms"),
-    payer: text("payer"),
-    asset: text("asset"),
+    responseStatus: integer("response_status").notNull(),
+    durationMs: integer("duration_ms").notNull(),
     txHash: text("tx_hash"),
-    settlementTx: text("settlement_tx"),
-    requestHeaders: jsonb("request_headers"),
-    responseHeaders: jsonb("response_headers"),
-    error: text("error"),
-    // Refund fields (migration 0010_api_gateway_extensions.sql).
+    // Refund fields (migration 0018_api_gateway_extensions.sql).
     refundStatus: text("refund_status").$type<"pending" | "refunded" | null>(),
     refundAmount: text("refund_amount"),
     refundTxHash: text("refund_tx_hash"),
     refundedAt: timestamp("refunded_at"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
   },
   (table) => ({
-    apiIdIdx: index("api_calls_api_id_idx").on(table.apiId),
-    createdAtIdx: index("api_calls_created_at_idx").on(table.createdAt),
-    chargedIdx: index("api_calls_charged_idx").on(table.charged),
-    payerAddressIdx: index("idx_api_calls_payer_address").on(table.payerAddress),
+    apiIdCreatedAtIdx: index("idx_api_calls_api_id_created_at").on(
+      table.apiId,
+      table.createdAt,
+    ),
+    payerAddressCreatedAtIdx: index("idx_api_calls_payer_address_created_at").on(
+      table.payerAddress,
+      table.createdAt,
+    ),
     refundTxIdx: uniqueIndex("idx_api_calls_refund_tx_hash").on(table.refundTxHash),
-    settlementTxIdx: index("api_calls_settlement_tx_idx").on(table.settlementTx),
   }),
 );
 
@@ -281,7 +281,7 @@ export const webhookDeliveries = pgTable(
   {
     id: serial("id").primaryKey(),
     eventId: text("event_id").notNull(),
-    apiId: integer("api_id")
+    apiId: text("api_id")
       .notNull()
       .references(() => apis.id, { onDelete: "cascade" }),
     url: text("url").notNull(),
@@ -333,7 +333,7 @@ export const apiPasses = pgTable(
 export const proxyIdempotency = pgTable(
   "proxy_idempotency",
   {
-    apiId: integer("api_id")
+    apiId: text("api_id")
       .notNull()
       .references(() => apis.id, { onDelete: "cascade" }),
     payer: text("payer").notNull(),

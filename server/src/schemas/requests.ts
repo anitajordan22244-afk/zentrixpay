@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { PASS_DURATION_MAX_MS, PASS_DURATION_MIN_MS } from "../lib/passDuration.js";
 
 export const publisherRegisterSchema = z
   .object({
@@ -7,6 +8,43 @@ export const publisherRegisterSchema = z
     walletAddress: z.string().min(1),
   })
   .strict();
+
+// ── Display text: names, descriptions and tags (issue #215) ──────────────────
+// These strings appear in the catalog and in MCP output that AI agents read.
+// Control characters, bidi overrides and zero-width characters let a name
+// spoof another API or smuggle instructions, so they are rejected. Text is
+// normalized to NFC first, so visually identical strings compare equal.
+
+// Bidi embedding/override/isolate controls (incl. LRM/RLM/ALM), zero-width joiners and spaces, BOM.
+const BIDI_AND_ZERO_WIDTH = /[\u061C\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/;
+
+/** C0 and C1 controls. Tab, LF and CR are allowed only where line breaks make sense. */
+function hasControlChar(value: string, multiline: boolean): boolean {
+  for (const ch of value) {
+    const code = ch.codePointAt(0)!;
+    if (multiline && (code === 0x09 || code === 0x0a || code === 0x0d)) continue;
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return true;
+  }
+  return false;
+}
+
+function hasUnsafeDisplayChars(value: string, multiline: boolean): boolean {
+  return hasControlChar(value, multiline) || BIDI_AND_ZERO_WIDTH.test(value);
+}
+
+const UNSAFE_TEXT_MESSAGE = "must not contain control, bidi-override or zero-width characters";
+
+/** Plain single-line text: normalized to NFC, no controls or Unicode tricks. */
+const displayLine = z
+  .string()
+  .transform((v) => v.normalize("NFC"))
+  .refine((v) => !hasUnsafeDisplayChars(v, false), UNSAFE_TEXT_MESSAGE);
+
+/** Multi-line text (descriptions): tab and line breaks are allowed. */
+const displayText = z
+  .string()
+  .transform((v) => v.normalize("NFC"))
+  .refine((v) => !hasUnsafeDisplayChars(v, true), UNSAFE_TEXT_MESSAGE);
 
 export const CATALOG_DEFAULT_LIMIT = 20;
 export const CATALOG_MAX_LIMIT = 100;
@@ -119,7 +157,7 @@ const healthPath = z
 // The upper bound (PROXY_MAX_RESPONSE_BYTES) is enforced by the service.
 const maxResponseBytes = z.number().int().min(1024);
 
-const tagList = z.array(z.string().trim().min(1).max(32).toLowerCase()).max(10);
+const tagList = z.array(z.string().trim().min(1).max(32).toLowerCase().pipe(displayLine)).max(10);
 
 export const PAYER_LIST_MAX = 500;
 
@@ -128,10 +166,17 @@ const payerList = z
   .max(PAYER_LIST_MAX)
   .transform((list) => [...new Set(list)]);
 
+/** Issue #278: access pass length in milliseconds, 1 hour .. 30 days. */
+const passDurationMs = z
+  .number()
+  .int()
+  .min(PASS_DURATION_MIN_MS, "passDurationMs must be at least 1 hour (3600000)")
+  .max(PASS_DURATION_MAX_MS, "passDurationMs must be at most 30 days (2592000000)");
+
 export const createApiSchema = z
   .object({
-    name: z.string().trim().min(1).max(120),
-    description: z.string().max(2000).optional(),
+    name: z.string().trim().min(1).max(120).pipe(displayLine),
+    description: z.string().max(2000).pipe(displayText).optional(),
     upstreamUrl: z.url(),
     price: usdcPrice,
     priceRules: apiPriceRules.default([]),
@@ -150,6 +195,8 @@ export const createApiSchema = z
     payerDenylist: payerList.default([]),
     // Issue #30: price of a time-limited access pass (null/omit = passes not offered).
     passPrice: usdcPrice.optional(),
+    // Issue #278: how long a pass lasts, in ms (1 hour .. 30 days; default 1 hour).
+    passDurationMs: passDurationMs.optional(),
     // Issue #32: how many free calls a wallet gets per day before the paywall kicks in.
     freeCallsPerDay: z.number().int().min(0).default(0),
   })
@@ -157,8 +204,8 @@ export const createApiSchema = z
 
 export const updateApiSchema = z
   .object({
-    name: z.string().trim().min(1).max(120).optional(),
-    description: z.string().max(2000).nullable().optional(),
+    name: z.string().trim().min(1).max(120).pipe(displayLine).optional(),
+    description: z.string().max(2000).pipe(displayText).nullable().optional(),
     upstreamUrl: z.url().optional(),
     price: usdcPrice.optional(),
     priceRules: apiPriceRules.nullable().optional(),
@@ -178,6 +225,8 @@ export const updateApiSchema = z
     listed: z.boolean().optional(),
     // Issue #30: null disables passes; a new price enables / reprices them.
     passPrice: usdcPrice.nullable().optional(),
+    // Issue #278: how long a pass lasts, in ms (1 hour .. 30 days).
+    passDurationMs: passDurationMs.optional(),
     // Issue #32: 0 disables free calls.
     freeCallsPerDay: z.number().int().min(0).optional(),
     // Issue #228: schedule a price change. Both fields together; null cancels a pending change.
@@ -264,13 +313,10 @@ export const apiStatsQuerySchema = z
 
 export type ApiStatsQuery = z.infer<typeof apiStatsQuerySchema>;
 
-/**
- * Query for GET /payers/:address/calls — paged call history for a wallet.
- */
 export const payerCallsQuerySchema = z
   .object({
-    limit: z.coerce.number().int().min(1).max(100).default(50),
-    offset: z.coerce.number().int().min(0).default(0),
+    limit: z.coerce.number().int().min(1).max(STATS_MAX_LIMIT).default(STATS_DEFAULT_LIMIT),
+    offset: z.coerce.number().int().min(0).max(100_000).default(0),
   })
   .strict();
 

@@ -22,6 +22,10 @@ export interface PublicApi {
   walletAddress: string;
   allowedMethods: HttpMethod[];
   tags: string[];
+  /** Price of a time-limited access pass; null when passes are not offered. */
+  passPrice?: string | null;
+  /** How long a pass lasts once bought, in milliseconds (1 hour .. 30 days, #278). */
+  passDurationMs?: number;
   /** False while health checks say the upstream is down; hidden from the catalog. */
   healthy: boolean;
   proxyUrl: string;
@@ -113,6 +117,10 @@ export interface ApiInput {
   healthPath?: string | null;
   tags?: string[];
   listed?: boolean;
+  /** Access pass price; null stops offering passes. */
+  passPrice?: string | null;
+  /** Access pass length in milliseconds, 1 hour .. 30 days (#278). */
+  passDurationMs?: number;
 }
 
 export interface RegisteredPublisher {
@@ -449,4 +457,19 @@ export function endpointsFromSpec(spec: OpenApiSpec | null | undefined): ApiEndp
   }
 
   return endpoints;
+}
+
+/** Access pass length bounds, mirrored from the server (#278). */
+export const PASS_DURATION_MIN_HOURS = 1;
+export const PASS_DURATION_MAX_HOURS = 30 * 24;
+
+/** Human-readable pass length, e.g. "1 hour", "7 days", "1 day 6 hours". */
+export function formatPassDuration(ms: number): string {
+  const hourMs = 60 * 60 * 1000;
+  const days = Math.floor(ms / (24 * hourMs));
+  const hours = Math.floor((ms % (24 * hourMs)) / hourMs);
+  const parts: string[] = [];
+  if (days) parts.push(`${days} ${days === 1 ? "day" : "days"}`);
+  if (hours) parts.push(`${hours} ${hours === 1 ? "hour" : "hours"}`);
+  return parts.join(" ") || "1 hour";
 }

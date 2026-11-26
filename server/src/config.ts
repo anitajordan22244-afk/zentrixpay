@@ -1,7 +1,12 @@
 import dotenv from "dotenv";
-import { z } from "zod";
+import { z } from "zod/v4";
 import { envBoolean } from "./lib/envBoolean.js";
 import { logger as rootLogger } from "./lib/logger.js";
+import {
+  applyNetworkEnvDefaults,
+  resolveStellarNetwork,
+  validateNetworkConfig,
+} from "@zentrixpay/registry-client";
 
 dotenv.config();
 
@@ -182,6 +187,7 @@ const envSchema = z.object({
   API_CALL_RECOVERY_INTERVAL_MS: z.coerce.number().int().min(0).default(30_000),
 });
 
+const envWithDefaults = applyNetworkEnvDefaults(process.env);
 const parsed = envSchema.safeParse(envWithDefaults);
 
 if (!parsed.success) {

@@ -1,6 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import { callApi, createFreighterSigner } from "@zentrixpay/client";
-import { createFreighterSigner as createWalletSigner } from "../lib/x402Buy.js";
+import {
+  createFreighterSigner as createWalletSigner,
+  expectedNetworkPassphrase,
+  expectedX402Network,
+} from "../lib/x402Buy.js";
 import { explorerTxUrl } from "../lib/stellarExplorer.js";
 import type { HttpMethod, PublicApi } from "../api/apis.js";
 import {
@@ -129,12 +133,9 @@ export function TryItModal({ api, wallet, onClose }: Props) {
     try {
       const response = await callApi(api.proxyUrl, {
         signer: createFreighterSigner(
-          createWalletSigner(wallet.address, "Test SDF Network ; September 2015"),
+          createWalletSigner(wallet.address, expectedNetworkPassphrase()),
         ),
-        network: (import.meta.env.VITE_STELLAR_NETWORK === "public" ||
-        import.meta.env.VITE_STELLAR_NETWORK === "mainnet"
-          ? "stellar:pubnet"
-          : "stellar:testnet") as "stellar:testnet" | "stellar:pubnet",
+        network: expectedX402Network(),
         method,
         path,
         body: prepared.body,

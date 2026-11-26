@@ -24,6 +24,11 @@ const STRIP_REQUEST = new Set([
   "x-api-key",
   "x-payment",
   "payment-signature",
+  // Wallet proofs for passes / free quota (#276) and credit spends.
+  "x-access-wallet",
+  "x-access-timestamp",
+  "x-access-nonce",
+  "x-access-signature",
   "forwarded",
   "x-forwarded-for",
   "x-forwarded-host",

@@ -46,7 +46,7 @@ export interface StoredProxyResponse {
 }
 
 export interface ProxyIdempotencyKey {
-  apiId: number;
+  apiId: string;
   payer: string;
   key: string;
 }

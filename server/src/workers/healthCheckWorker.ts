@@ -121,9 +121,10 @@ async function runHealthChecks(): Promise<void> {
     );
     const workers = Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
       for (let api = queue.shift(); api; api = queue.shift()) {
+        const apiId = api.id;
         await checkOne(api).catch((err) =>
           logger.error(
-            { event: "health_check_error", apiId: api!.id, err },
+            { event: "health_check_error", apiId, err },
             "health check failed to run",
           ),
         );

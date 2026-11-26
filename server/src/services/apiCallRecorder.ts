@@ -24,6 +24,7 @@ export interface ApiCallRecord {
   charged: boolean;
   method: string;
   path: string;
+  txHash?: string | null;
   responseStatus: number;
   durationMs: number;
   /** ISO-8601 time the call finished; kept so recovered rows keep their real time. */
@@ -235,10 +236,16 @@ export function postgresApiCallRecordStore(
       await db.transaction(async (tx) => {
         await tx.execute(sql`
           insert into api_calls
-            (id, api_id, payer_address, amount, charged, method, path, response_status, duration_ms, created_at)
+            (
+              id, api_id, payer_address, amount, charged, method, path,
+              response_status, duration_ms, tx_hash, created_at
+            )
           values
-            (${r.callId}, ${r.apiId}, ${r.payerAddress}, ${r.amount}, ${r.charged}, ${r.method},
-             ${r.path}, ${r.responseStatus}, ${r.durationMs}, ${r.createdAt}::timestamptz)
+            (
+              ${r.callId}, ${r.apiId}, ${r.payerAddress}, ${r.amount}, ${r.charged},
+              ${r.method}, ${r.path}, ${r.responseStatus}, ${r.durationMs},
+              ${r.txHash ?? null}, ${r.createdAt}::timestamptz
+            )
           on conflict (id) do nothing
         `);
         if (r.webhook) {

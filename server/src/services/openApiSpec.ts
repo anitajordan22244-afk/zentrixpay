@@ -5,10 +5,31 @@ import { parse as parseYaml } from "yaml";
 // `servers` entry at the paid proxy and scrubs the upstream origin everywhere.
 
 export const MAX_OPENAPI_SPEC_BYTES = 512 * 1024;
+/** Deepest object/array nesting a spec may use (issue #214). */
+export const MAX_OPENAPI_SPEC_DEPTH = 64;
 
 const HTTP_OPERATIONS = ["get", "put", "post", "delete", "options", "head", "patch", "trace"];
 
 export class OpenApiSpecError extends Error {}
+
+/** Document is over the size cap; the route maps this to HTTP 413. */
+export class OpenApiSpecTooLargeError extends OpenApiSpecError {
+  readonly status = 413;
+}
+
+/** Greatest nesting depth of objects/arrays, computed without recursion. */
+export function openApiSpecDepth(root: unknown): number {
+  let max = 0;
+  const stack: Array<{ node: unknown; depth: number }> = [{ node: root, depth: 1 }];
+  while (stack.length > 0) {
+    const { node, depth } = stack.pop()!;
+    if (typeof node !== "object" || node === null) continue;
+    max = Math.max(max, depth);
+    const children = Array.isArray(node) ? node : Object.values(node);
+    for (const child of children) stack.push({ node: child, depth: depth + 1 });
+  }
+  return max;
+}
 
 type Json = Record<string, unknown>;
 
@@ -21,7 +42,9 @@ export function parseOpenApiSpec(input: string | Json): Json {
   let doc: unknown = input;
   if (typeof input === "string") {
     if (Buffer.byteLength(input, "utf8") > MAX_OPENAPI_SPEC_BYTES) {
-      throw new OpenApiSpecError(`OpenAPI document exceeds ${MAX_OPENAPI_SPEC_BYTES} bytes`);
+      throw new OpenApiSpecTooLargeError(
+        `OpenAPI document exceeds ${MAX_OPENAPI_SPEC_BYTES} bytes`,
+      );
     }
     try {
       // YAML is a superset of JSON, so one parser covers both. Aliases are
@@ -37,7 +60,12 @@ export function parseOpenApiSpec(input: string | Json): Json {
 
   const serialized = JSON.stringify(doc);
   if (Buffer.byteLength(serialized, "utf8") > MAX_OPENAPI_SPEC_BYTES) {
-    throw new OpenApiSpecError(`OpenAPI document exceeds ${MAX_OPENAPI_SPEC_BYTES} bytes`);
+    throw new OpenApiSpecTooLargeError(`OpenAPI document exceeds ${MAX_OPENAPI_SPEC_BYTES} bytes`);
+  }
+  if (openApiSpecDepth(doc) > MAX_OPENAPI_SPEC_DEPTH) {
+    throw new OpenApiSpecError(
+      `OpenAPI document nests deeper than ${MAX_OPENAPI_SPEC_DEPTH} levels`,
+    );
   }
   if (typeof doc.openapi !== "string" || !/^3\.\d+(\.\d+)?$/.test(doc.openapi)) {
     throw new OpenApiSpecError('Only OpenAPI 3.x documents are supported ("openapi": "3.x.y")');
@@ -107,6 +135,27 @@ function scrubStrings(value: unknown, upstream: URL, proxyUrl: string): unknown 
   return walk(value);
 }
 
+/**
+ * Remove `x-` extension keys from the places the OpenAPI spec defines them
+ * (root, info, path items, operations). Schema property names are left alone,
+ * since a property may legitimately be called `x-…`.
+ */
+function stripExtensions(doc: Json): void {
+  const strip = (node: unknown) => {
+    if (!isObject(node)) return;
+    for (const key of Object.keys(node)) if (key.startsWith("x-")) delete node[key];
+  };
+  strip(doc);
+  strip(doc.info);
+  if (isObject(doc.paths)) {
+    for (const item of Object.values(doc.paths)) {
+      strip(item);
+      if (!isObject(item)) continue;
+      for (const method of HTTP_OPERATIONS) strip(item[method]);
+    }
+  }
+}
+
 /** The spec as callers see it: servers point at the proxy, the upstream is never named. */
 export function publicOpenApiSpec(spec: Json, upstreamUrl: string, proxyUrl: string): Json {
   const upstream = new URL(upstreamUrl);
@@ -152,6 +201,7 @@ export function publicOpenApiSpec(spec: Json, upstreamUrl: string, proxyUrl: str
     }
   }
 
+  stripExtensions(doc);
   return scrubStrings(doc, upstream, proxyUrl) as Json;
 }
 
@@ -235,6 +285,8 @@ export function groupOpenApiOperations(spec: Json): OpenApiImportGroup[] {
 export function previewOpenApiImport(input: string | Json): {
   groups: OpenApiImportGroup[];
   errors: string[];
+  /** True when the document is over the size cap, so callers can answer 413. */
+  tooLarge: boolean;
 } {
   try {
     const spec = parseOpenApiSpec(input);
@@ -242,11 +294,12 @@ export function previewOpenApiImport(input: string | Json): {
     const errors = groups.flatMap((group) =>
       group.serverUrl ? [] : [`${group.key}: document has no usable server URL`],
     );
-    return { groups, errors };
+    return { groups, errors, tooLarge: false };
   } catch (error) {
     return {
       groups: [],
       errors: [error instanceof Error ? error.message : "Invalid OpenAPI document"],
+      tooLarge: error instanceof OpenApiSpecTooLargeError,
     };
   }
 }

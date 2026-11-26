@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import pino from "pino";
+import pino, { type Logger } from "pino";
 
 /**
  * Names of upstream headers that may carry provider secrets.
@@ -37,38 +37,51 @@ function buildRedactPaths(): string[] {
   return paths;
 }
 
-export const logger = pino({
+// ── Request-scoped context ───────────────────────────────────────────────────
+
+const requestIdStorage = new AsyncLocalStorage<string>();
+
+/**
+ * Returns the request ID associated with the current async execution context,
+ * or undefined if called outside a request context.
+ */
+export function getRequestId(): string | undefined {
+  return requestIdStorage.getStore();
+}
+
+/**
+ * Run `fn` with `requestId` bound to the current async context. Any call to
+ * `getLogger()` or log statements inside `fn` will include the request ID automatically.
+ */
+export function runWithRequestContext<T>(requestId: string, fn: () => T): T {
+  return requestIdStorage.run(requestId, fn);
+}
+
+export const rootLogger = pino({
   level: process.env.LOG_LEVEL ?? "info",
   redact: {
     paths: buildRedactPaths(),
     censor: "[REDACTED]",
   },
   mixin() {
+    const requestId = getRequestId();
     return {
       service: "server",
+      ...(requestId ? { requestId } : {}),
     };
   },
 });
 
-/**
- * Returns the shared logger instance. Provided as a function so callers can
- * import `getLogger` and call it without needing to reference the named export
- * directly (matches the usage pattern across the codebase).
- */
-export function getLogger() {
-  return logger;
-}
-
-// ── Request-scoped context ───────────────────────────────────────────────────
-
-const requestIdStorage = new AsyncLocalStorage<string>();
+export const logger = rootLogger;
 
 /**
- * Run `fn` with `requestId` bound to the current async context. Any call to
- * `getLogger()` inside `fn` will include the request ID automatically.
+ * Returns a logger instance. If called within an active request context (via
+ * `runWithRequestContext`), returns a child logger bound to `{ requestId }`.
+ * Otherwise returns the root logger.
  */
-export function runWithRequestContext(requestId: string, fn: () => void): void {
-  requestIdStorage.run(requestId, fn);
+export function getLogger(): Logger {
+  const requestId = getRequestId();
+  return requestId ? rootLogger.child({ requestId }) : rootLogger;
 }
 
 export default logger;
